@@ -1,0 +1,493 @@
+---
+title: "Modèle linéaire généralisé et choix de modèles"
+author: "Paul Hardouin"
+date: "August 31, 2019"
+output:
+  html_document:
+    fig_height: 4
+    highlight: textmate
+    theme: sandstone
+    toc: yes
+    toc_depth: 4
+  pdf_document:
+    fig_height: 3
+    fig_width: 7
+    highlight: zenburn
+    toc: yes
+    toc_depth: 4
+subtitle: Devoir maison obligatoire (Dauphine)
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+\newpage
+
+# 1. Introduction
+
+&nbsp;
+
+#### **1.1 Données et objectif**
+
+Pour cette étude, nous travaillons sur un jeu de données [source : **MeteoBlue**] sur les conditions météorologiques à Bale.
+Chaque ligne correspond à un jour entre 2010 et 2018. On y trouve les mesures de paramètres divers, ainsi qu'un booléen **pluie.demain** informant de la présence de pluie le lendemain du jour concerné.
+
+&nbsp;
+
+#### **1.2 Type de modèle à trouver**
+
+L'objectif est de trouver une valeur booléenne en fonction de covariables à valeurs continues.  
+Il s'agit donc d'un problème de régréssion logistique.
+
+Compte-tenu de la nature du problème, nous cherchons un modèle **LOGIT [glm, family = binomial]**  
+On ne s'intéresse pas au probit, car la probabilité recherchée n'est pas très proche de 0 ou de 1.
+
+Nous renoncons aux modèles suivants
+
+* **PROBIT** [glm, family = binomial(link = "probit")]
+* **BINOMIAL** [glm + cbind, family = binomial]
+* **MULTINOMIAL** [multinom]
+* **CUMULATIF** [clm]
+* **POISSON** [glm, family = poisson]
+
+&nbsp;
+
+#### **1.3 Quatre méthodes pour trouver les modèles**
+
+* **MANUEL**  : sélection de covariables en observant les données
+* **stepAIC** : recherche pas à pas en utilisant le critère AIC
+* **stepBIC** : recherche pas à pas en utilisant le critère BIC
+* **COMPLET** : utilisation de toutes les covariables
+
+&nbsp;
+
+\newpage
+
+# 2. Lecture et exploration des données
+
+&nbsp;
+
+#### **2.1 Lecture**
+```{r lecture, echo=TRUE}
+d = read.csv("meteo.train.csv")
+#summary(d)
+```
+
+&nbsp;
+
+#### **2.2 Visualisation des données**
+
+On veut pouvoir observer facilement l'influence des covariables sur **pluie.demain**  
+On crée donc la fonction **myVisu** pour cela
+
+```{r myVisu, echo=TRUE}
+  myVisu = function(d,ind,exportOption){
+    # 0. Load library
+      library(ggplot2)
+      library(egg)
+      p = ggplot(d, aes_string(x = colnames(d)[ind], fill = "pluie.demain"))
+    # 1. Create histogramme
+      p = ggplot(d, aes_string(x = colnames(d)[ind], fill = "pluie.demain"))
+      hp = p + labs(title = colnames(d)[ind], x = colnames(d)[ind],  y = "Densité empirique",
+                    fill = "Pluie Demain", subtitle = "Histogramme de distribution") +
+              geom_density(alpha = 0.4) + # Transparency
+              guides(fill = guide_legend(override.aes = list(alpha = 1)))
+    # 2. Create a box plot (bp)
+      p = ggplot(d, aes_string(x = "pluie.demain", y = colnames(d)[ind]))
+      bp = p + geom_boxplot(aes_string(color = "pluie.demain"), alpha=0.5)
+    # 3. Display
+      figure = ggarrange(hp, bp, ncol = 2, nrow = 1)
+    # 4. Export
+      if (exportOption){ggsave(sprintf("meteo_feature_%02d.png",ind), plot = figure, width = 11, height = 8)}
+    # 5. Update indice
+      return(figure)
+  }
+```
+
+```{r loopExplore, echo=TRUE}
+  # for(i in 1:ncol(d)){
+  #   if(length(unique(d[, i])) >= 2 & colnames(d)[i] != "pluie.demain")
+  #   {
+  #     toto = myVisu(d,i,1)
+  #   }
+  # }
+```
+
+&nbsp;
+
+\newpage
+
+On observe des covariables qui semblent pouvoir influer **pluie.demain**  
+En effet, les distributions **TRUE/FALSE** sont différentes.
+
+```{r myVisu_KEEP, echo=TRUE}
+    library(gridExtra)
+    #myFig=myVisu(d, 9,0)
+    myFig=myVisu(d,12,0)
+```
+
+&nbsp;
+
+A l'inverse, on voit aussi des covariables pour lesquelles les distributions  **TRUE/FALSE** sont très proches.
+```{r myVisu_DROP, echo=TRUE}
+    #myFig=myVisu(d, 8,0)
+    myFig=myVisu(d,28,0)
+```
+
+&nbsp;
+
+\newpage
+
+# 3. Ajout et suppression de covariables
+
+&nbsp;
+
+#### **3.1 Ajout de covariables **
+
+On sent intuitivement que le cycle des saisons peut avoir une influence sur la pluie.  
+Pour appliquer une régréssion linéaire sur une telle information, on veut créer 2 covariables:
+
+* le **cosinus** du **jour julien**
+* le **sinus** du **jour julien**
+
+On s'apercoit en réalite que la vraie périodicité est plutot de 6 mois.  
+Les covariables créées sont donc les suivantes:
+
+* la valeur absolue du **cosinus** du **jour julien**
+* la valeur absolue du **sinus** du **jour julien**
+
+```{r create_coVar, echo=TRUE}
+  tmp = do.call(paste, list(d$Month, d$Day, d$Year))
+  tmp = as.Date(tmp, format=c("%m %d %Y"))
+  d$mycosJD <- abs(cos(as.numeric(format(tmp, "%j"))/365*2*pi))
+  d$mysinJD <- abs(sin(as.numeric(format(tmp, "%j"))/365*2*pi))
+```
+
+&nbsp;
+
+On visualise la distribution suivante pour **mycosJD**
+
+```{r create_coVar_myVisu1, echo=TRUE}
+    myFig=myVisu(d,48,0)
+```
+
+\newpage
+
+On visualise la distribution suivante pour **mysinJD**
+
+```{r create_coVar_myVisu2, echo=TRUE}
+    myFig=myVisu(d,49,0)
+```
+
+&nbsp;
+
+#### **3.2 Suppression de covariables inutiles**
+
+On supprime quelques covariables encombrantes.
+Les **heures** et les **minutes**.
+
+```{r remove_coVar, echo=TRUE}
+  d = d[,!colnames(d) %in% c("Hour", "Minute")]
+```
+
+&nbsp;
+
+\newpage
+
+# 4. Construction des 4 modèles
+
+&nbsp;
+
+#### **4.1 Modèle 1 : MANUEL  : sélection de covariables en observant les données**
+
+Pour ce modèle, on fait une selection manuelle des covariables.
+Pour cela, on exporte **myVisu** pour toutes les covariables vues en haut.
+On sélectionne alors manuellement les covariables aui nous intéressent.
+
+&nbsp;
+
+On obtient un modèle avec 11 covariables.
+
+```{r modelePERSO, echo=TRUE}
+  m_perso = glm(formula = pluie.demain ~ Mean.Sea.Level.Pressure.daily.mean..MSL. +
+                                          Mean.Sea.Level.Pressure.daily.max..MSL. +
+                                          Mean.Sea.Level.Pressure.daily.min..MSL. +
+                                          Total.Cloud.Cover.daily.mean..sfc. +
+                                          Sunshine.Duration.daily.sum..sfc. +
+                                          Wind.Direction.daily.mean..10.m.above.gnd. +
+                                          Wind.Direction.daily.mean..80.m.above.gnd. +
+                                          Wind.Direction.daily.mean..900.mb. +
+                                          High.Cloud.Cover.daily.max..high.cld.lay. +
+                                          mycosJD +
+                                          mysinJD,
+          family = binomial,
+          data = d)
+  f_perso= formula(m_perso) # formule du modèle
+  n_perso = names(m_perso$coefficients) # nom des covariables retenues
+  summary(m_perso)
+```
+
+&nbsp;
+
+\newpage
+
+#### **4.2 Modèle 2 : stepAIC : recherche pas à pas en utilisant le critère AIC**
+
+Pour ce modèle, on fait une recherche pas à pas en utilisant le critère AIC (par defaut).
+On fait une recherche avec la méthode progressive.
+
+```{r modeleAIC_1a, eval=FALSE}
+  fit1 = glm(pluie.demain ~ ., family = binomial, data = d)
+  fit2 = glm(pluie.demain ~ 1, family = binomial, data = d)
+  m_AIC = step(fit2,direction="both"    ,scope=list(upper=fit1,lower=fit2))
+```
+```{r modeleAIC_1b, include=FALSE}
+  fit1 = glm(pluie.demain ~ ., family = binomial, data = d)
+  fit2 = glm(pluie.demain ~ 1, family = binomial, data = d)
+  m_AIC = step(fit2,direction="both"    ,scope=list(upper=fit1,lower=fit2))
+```
+
+&nbsp;
+
+AIC : on obtient un modèle avec 9 covariables.
+
+```{r modeleAIC_3, echo=TRUE}
+  f_AIC = formula(m_AIC) # formule du modèle
+  n_AIC = names(m_AIC$coefficients) # nom des covariables retenues
+  summary(m_AIC)
+```
+
+&nbsp;
+
+\newpage
+
+#### **4.3 Modèle 3 : stepBIC : recherche pas à pas en utilisant le critère BIC**
+
+Pour ce modèle, on fait une recherche pas à pas en utilisant le critère BIC.
+Ce critère est plus favorable aux modèles restreint en nombre de covariables.
+Pour cela, on change la valeur du parametre **k** de la fonction **step**.
+Pour AIC, on a **k = 2**.
+Pour BIC, on a **k = log(nrow(d))**
+On fait une recherche avec la méthode progressive.
+
+```{r modeleBIC_1a, eval=FALSE}
+  fit1 = glm(pluie.demain ~ ., family = binomial, data = d)
+  fit2 = glm(pluie.demain ~ 1, family = binomial, data = d)
+  m_BIC = step(fit2,direction="both"    ,scope=list(upper=fit1,lower=fit2) ,k=log(nrow(d)))
+```
+```{r modeleBIC_1b, include=FALSE}
+  fit1 = glm(pluie.demain ~ ., family = binomial, data = d)
+  fit2 = glm(pluie.demain ~ 1, family = binomial, data = d)
+  m_BIC = step(fit2,direction="both"    ,scope=list(upper=fit1,lower=fit2) ,k=log(nrow(d)))
+```
+
+&nbsp;
+
+BIC : on obtient un modèle avec 5 covariables.  
+Cela était prévisible, car BIC privilégie les modèles avec peu de covariables.
+
+```{r modeleBIC_3, echo=TRUE}
+  f_BIC = formula(m_BIC) # formule du modèle
+  n_BIC = names(m_BIC$coefficients) # nom des covariables retenues
+  summary(m_BIC)
+```
+
+&nbsp;
+
+\newpage
+
+#### **4.4 Modèle 4 : COMPLET : utilisation de toutes les covariables**
+
+Pour ce modèle, on prend toutes les covariables du jeu de données.
+
+```{r modeleFULL, echo=TRUE}
+  m_full = glm(formula = pluie.demain ~ .,
+          family = binomial,
+          data = d)
+  f_full = formula(m_full) # formule du modèle
+  n_full = colnames(d) # nom des covariables retenues
+  summary(m_full)
+```
+
+&nbsp;
+
+\newpage
+
+# 5. ACP sur les modèles
+
+&nbsp;
+
+On affiche les ACP des différents modèles, pour voir si certains discriminent mieux **pluie.demain**
+
+* Le modèle BIC semble le mieux *(61% expliqués par 2 PC + ellipses un peu séparées)*
+* Ensuite, les modèle AIC *(60% expliqués par 2 PC + ellipses un peu séparées)*
+* Ensuite, le modèle manuel *(58% expliqués par 2 PC + ellipses un peu séparées)*
+* Enfin, le modèle complet semble plus médiocre *(40% expliqués par 2 PC + ellipses très proches)*
+
+```{r loadLibraies_ACP_1, eval=FALSE}
+  library('FactoMineR')
+  library("factoextra")
+```
+```{r loadLibraies_ACP_2, include=FALSE}
+  library('FactoMineR')
+  library("factoextra")
+```
+```{r modelePERSO_ACP, echo=TRUE, fig.height=2.5}
+  D = d[,(colnames(d) %in% n_perso) | colnames(d)=="pluie.demain"]
+  res.pca = PCA(D,quali.sup = which(colnames(D)=="pluie.demain"),graph=FALSE)
+  fviz_pca_ind (res.pca, geom.ind="point", col.ind=d$pluie.demain ,
+                legend.title="pluie demain", addEllipses = T, title="ACP modèle manuel")
+```
+```{r modeleAIC_ACP, echo=TRUE, fig.height=2.5}
+  D = d[,(colnames(d) %in% n_AIC) | colnames(d)=="pluie.demain"]
+  res.pca = PCA(D,quali.sup = which(colnames(D)=="pluie.demain"),graph=FALSE)
+  fviz_pca_ind (res.pca, geom.ind="point", col.ind=d$pluie.demain ,
+                legend.title="pluie demain", addEllipses = T, title="ACP modèle AIC")
+```
+
+\newpage
+
+```{r modeleBIC_ACP, echo=TRUE, fig.height=2.5}
+  D = d[,(colnames(d) %in% n_BIC) | colnames(d)=="pluie.demain"]
+  res.pca = PCA(D,quali.sup = which(colnames(D)=="pluie.demain"),graph=FALSE)
+  fviz_pca_ind (res.pca, geom.ind="point", col.ind=d$pluie.demain ,
+                legend.title="pluie demain", addEllipses = T, title="ACP modèle BIC")
+```
+```{r modeleFULL_ACP, echo=TRUE, fig.height=2.5}
+  D = d
+  res.pca = PCA(D,quali.sup = which(colnames(D)=="pluie.demain"),graph=FALSE)
+  fviz_pca_ind (res.pca, geom.ind="point", col.ind=d$pluie.demain ,
+                legend.title="pluie demain", addEllipses = T, title="ACP modèle complet")
+```
+
+\newpage
+
+# 6. Etude de performance par validation croisée
+
+&nbsp;
+
+#### **6.1 Fonction pour faire la validation croisée**
+
+**Métrique : **
+Pour ce calcul, on cherche a mesurer le taux d'erreur de prédiciction.
+On compare donc les vraies valeur de **pluie.demain** au arrondis des prédictions.
+
+**Partitions : **
+Comme les données consécutives ont de la cohérence, on ne va pas les couper en K blocs consécutifs.
+A la place, pour le kieme bloc, on prend une ligne toutes les K lignes, en commencant par la kieme ligne.
+
+**Critère de choix : MOYENNE des erreurs : **
+On choisira le modèle donnant le moins d'erreur moyenne sur la cross-validation.
+Les coefficients finaux seront donc la moyenne ponderée des coefficients de la validation croisèe.
+Le modèle contenant ces coefficient finaux est la seconde sortie de la fonction.
+
+&nbsp;
+
+```{r fonctionCV, echo=TRUE}
+  myCrossValidation = function(formule,dataFrame,nParts)
+  {
+    # Initialization
+      errV = numeric(0)
+    # Boucle for sur le nombre de parties
+      for (k in 1:nParts)
+      {
+        # Calcul des indices du jeu de test
+          indTest = seq(k,nrow(dataFrame),nParts)
+          df_test = dataFrame[indTest,]
+          df_train = dataFrame[-indTest,]
+        # Calcul du modèle
+          modele = glm(formule, family = binomial, data = df_train)
+        # Calcul des coefficient du modèle final
+          if (k==1)
+            { MODEL = modele
+              N_TRAIN = nrow(df_train)
+              MODEL$coefficients = modele$coefficients*N_TRAIN
+              N_SUM = N_TRAIN }
+          else
+            { N_TRAIN = nrow(df_train)
+              MODEL$coefficients = MODEL$coefficients + modele$coefficients*N_TRAIN
+              N_SUM = N_SUM + N_TRAIN }
+        # Prédiction pour la validation crois
+          pred = predict(modele, df_test, type = "response")
+        # Calcul de l'erreur de prediction
+          err = mean(abs(round(pred)-df_test$pluie.demain))
+        # Ajout au vecteur
+          errV = rbind(errV,err)
+      }
+    # Output
+      MODEL$coefficients = MODEL$coefficients/N_SUM
+      return(list(erreur = errV, modele = MODEL))
+  }
+```
+
+&nbsp;
+
+\newpage
+
+#### **6.2 Application de la validation croisée avec 10 blocs**
+
+```{r applyCV, echo=TRUE}
+  cv_perso = myCrossValidation(f_perso, d, 10)
+  cv_AIC   = myCrossValidation(f_AIC  , d, 10)
+  cv_BIC   = myCrossValidation(f_BIC  , d, 10)
+  cv_full  = myCrossValidation(pluie.demain ~ . , d, 10)
+```
+
+&nbsp;
+
+#### **6.3 Observation des résultats**
+
+Voici l'ensemble des taux d'erreur pour les différentes méthodes
+
+```{r viewCV1, echo=TRUE}
+  myResults = data.frame(cv_perso$erreur,cv_AIC$erreur,cv_BIC$erreur,cv_full$erreur)
+  myResults
+```
+
+```{r viewCV2, echo=FALSE}
+  bestMean = mean(cv_BIC$erreur)
+```
+
+&nbsp;
+
+En observant les métriques ci-dessous, on choisit de retenir **le modèle BIC**.
+En effet, le **le modèle BIC** obtient la moyenne la plus faible avec **0.3005**
+
+```{r viewCV3, echo=TRUE}
+  summary(myResults)
+```
+
+&nbsp;
+
+\newpage
+
+# 7. Application du modèle retenu au jeu de test
+
+&nbsp;
+
+* Lecture des données + création des features **mycosJD** et **mysinJD**.
+* Prédiction avec le modèle moyenné **BIC** retenu.
+* Nettoyage des features.
+* Export du data frame dans le fichier **hardouin_meteo.predict.csv**.
+
+&nbsp;
+
+```{r applyFinalModel, echo=TRUE}
+  # Lecture des données à prédire
+    df_test = read.csv("meteo.test.csv")
+  # Ajout de mycosJD et mysinJD
+    tmp = do.call(paste, list(df_test$Month, df_test$Day, df_test$Year))
+    tmp = as.Date(tmp, format=c("%m %d %Y"))
+    df_test$mycosJD <- abs(cos(as.numeric(format(tmp, "%j"))/365*2*pi))
+    df_test$mysinJD <- abs(sin(as.numeric(format(tmp, "%j"))/365*2*pi))
+  # Prédiction
+    prediction = round(predict(cv_BIC$modele, df_test, type = "response"))
+  # Nettoyage
+    df_test = df_test[,c("X","Year","Month","Day")]
+    df_test$pluie.demain.prediction = prediction
+  # Export
+    write.csv(df_test,"hardouin_meteo.predict.csv")
+```
+
+
