@@ -1,0 +1,618 @@
+---
+title: "Statistique bayésienne"
+author: "Paul Hardouin"
+date: "February 26, 2020"
+output:
+  pdf_document:
+    fig_height: 3
+    fig_width: 7
+    highlight: zenburn
+    latex_engine: xelatex
+    toc: yes
+    toc_depth: 5
+subtitle: Devoir maison obligatoire (Dauphine)
+header-includes: \usepackage{xcolor}
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+\newpage
+
+Les enseignants des collèges et lycées français souhaitant obtenir une mutation professionnelle sont classés en fonction d’un nombre de points qui dépend de leur situation personnelle et de leur carrière. Le fichier **mutations2.csv** donne le nombre de points nécessaire pour obtenir une mutation dans les lycées de l’académie de Versailles en 2012, pour diverses disciplines enseignées ; c’est une mesure de l’attractivité de chaque établissement pour les enseignants. Par exemple, en mathématiques, il suffisait de 21 points pour pouvoir être nommé au lycée Georges Braque d’Argenteuil, mais il en fallait 464 pour être nommé au lycée Michelet de Vanves. Nous allons étudier ce nombre de points, dans un cadre bayésien.
+
+Pour des couples (établissement, discipline), on dispose du nombre de points nécessaire (colonne **Barre**) pour obtenir une mutation, ainsi que de caractéristiques de l’établissement : nombre de candidats au baccalauréat par série, taux de réussite au baccalauréat par série, taux de réussite attendu (qui dépend notamment du tissu socioprofessionnel des parents d’élèves), taux d’accès des élèves de seconde et de première au baccalauréat. Par souci d’homogénéité des données, on considère uniquement les filières du lycée général, même si beaucoup des établissements concernés préparent aussi au baccalauréat technologique et parfois au baccalauréat professionnel.
+
+# **1. Régression linéaire**
+
+On propose d’abord un modèle linéaire gaussien. On cherche à expliquer le nombre de points nécessaire à une mutation (colonne **Barre**) par les caractéristiques du lycée.
+
+#### **1.1. Régression linéaire bayésienne**
+
+============================================================
+Effectuer une régression linéaire bayésienne et interpréter les coefficients obtenus.  
+============================================================
+
+&nbsp;
+
+En premier lieu, on charge les librairies et les données.
+
+```{r 11_load, include=FALSE}
+# Load libraries
+  library(knitr)
+  library(mvtnorm)
+  library(data.table)
+  library(kableExtra)
+  library(tidyverse)
+  library(actuar)
+# Lecture des données
+  data = read.csv("mutations2.csv")
+```
+
+On fait ensuite de l'inférence bayésienne avec la loi a priori *g* de Zellner. Comme nous n'avons pas de connaissance particulière de ce type de données, on choisit un a priori assez léger en prenant g = n (nombre d'individus).
+
+```{r 11_bayes, echo=TRUE}
+# Mise en forme des données
+  Y = data[, 6]
+  X = cbind(1,as.matrix(data[, 7:23]))
+  n = length(Y)
+# Calcul de Beta Hat (maximum de vraisemblance)
+  betaHat = solve(t(X)%*%X)%*%t(X)%*%Y
+# Calcul de S2 (maximum de vraisemblance)
+  s2 = t(Y-X%*%betaHat)%*%(Y-X%*%betaHat)
+# A priori de Zellner
+  g=n
+# Espérance a posteriori de beta
+  betaPost = betaHat * g / (g + 1)
+# Espérance a posteriori de sigma^2 (inverse gamma)
+  a = n/2
+  b = s2/2 + 1/(2*g+2) * ((t(betaHat)%*%t(X))%*%(X%*%betaHat))
+  sigma2Post = b / (a-1)
+```
+
+\newpage
+
+A partir des estimations obtenues, on peut estimer des intervalles de crédibilité. On effectue aussi une simulation pour pourvoir afficher les densités de distributions des coefficients significatifs.
+
+```{r 11_credibilite, echo=TRUE}
+# Simulation
+  variance = as.integer(sigma2Post) * g / (g + 1) * solve(t(X)%*%X)
+  simul = rmvnorm(1e4, mean = betaPost, sigma = variance)
+# Intervalles
+  semiRange = 1.96*sqrt(diag(variance))
+  lowRange = betaPost - semiRange
+  highRange = betaPost + semiRange
+# Aggregation resultats
+  D = data.frame(low_95 = lowRange, beta = betaPost, high_95 = highRange)
+  setattr(D, "row.names", c("intercept",row.names(D)[2:dim(D)[1]]))
+```
+
+\definecolor{pos_perso}{HTML}{458B00}
+\definecolor{neg_perso}{HTML}{104E8B}
+En observant les estimations des coefficients et leurs intervalles de crédibilité, on peut identifier des variables qui contribuent \textcolor{pos_perso}{\textbf{positivement}} à la **barre** cible et d'autres qui contribuent \textcolor{neg_perso}{\textbf{négativement}}. C'est-à-dire des coefficients estimés nettement différents de 0, avec une distribution crédible à 95% du même signe (ou quasiment).
+
+```{r 11_table, echo=FALSE}
+kable(D, "latex", digits = 1, booktabs = T) %>%
+row_spec(c(5,6,7,13,16), bold = T, color = "#458b00")  %>% #background = "#D7261E"
+row_spec(c(1,8,14,15), bold = T, color = "#104e8b") %>%
+kable_styling(position = "center", latex_options = "striped", font_size = 10, full_width = F)
+```
+
+On remarque en particulier la très faible contribution des variables suivantes :
+
+* **effectif_presents_serie_l**
+* **effectif_presents_serie_es**
+* **effectif_presents_serie_s**
+* **effectif_de_seconde**
+* **effectif_de_première**.
+
+\newpage
+
+Ci-dessous, quelques densités calculées à partir des tirages de la loi a posteriori, pour illustrer ces interprétations.
+
+```{r 11_fun, echo=FALSE}
+dispVar = function(ind, simul, color, D, lowRange, highRange){
+# calculation
+  rN = rownames(D)[ind]
+  d = density(simul[,ind])
+  xx = d$x[d$x>=lowRange[ind] & d$x<=highRange[ind]]
+  yy = d$y[d$x>=lowRange[ind] & d$x<=highRange[ind]]
+  if (color>0) {color="#458b00"} else {color="#104e8b"}
+# display
+  plot(d,main="")
+  polygon( c(xx,rev(xx)), c(rep(0,length(xx)),rev(yy)), border=NA, col=color )
+  abline(v=0)
+  title(rN,cex.main=2)
+}
+```
+```{r 11_disp, echo=FALSE, fig.height=18, fig.width=14, out.width="100%"}
+par(mfrow = c(4, 2))
+dispVar( 5, simul, 1, D, lowRange, highRange)
+dispVar( 6, simul, 1, D, lowRange, highRange)
+dispVar( 7, simul, 1, D, lowRange, highRange)
+dispVar( 8, simul, 0, D, lowRange, highRange)
+dispVar(13, simul, 1, D, lowRange, highRange)
+dispVar(14, simul, 0, D, lowRange, highRange)
+dispVar(15, simul, 0, D, lowRange, highRange)
+dispVar(16, simul, 1, D, lowRange, highRange)
+```
+
+\newpage
+
+#### **1.2. Covariables significatives + comparaison à la méthode fréquentiste**
+
+============================================================
+Choisir les covariables significatives. Comparer au résultat obtenu par une analyse fréquentiste.  
+*Afin de réduire le coût computationnel, il peut être intéressant d’effectuer une présélection des covariables considérées.*  
+============================================================
+
+&nbsp;
+
+Pour effectuer ce choix, on va mettre en oeuvre un échantillonneur de Gibbs. Pour cela, on reprend les fonctions vues pendant la formation.
+
+```{r 12_fun1, echo=TRUE}
+# fonction pour calculer la log-vraisemblance marginale
+########################################################
+marglkd = function(gamma, X, Y, n, g){
+  q=sum(gamma)
+  X1=X[ ,c(T,gamma)]
+  if(q==0)
+    {m = -n/2 * log(t(Y)%*%Y)}
+  else
+    {m = -q/2*log(g+1) -n/2*log(t(Y)%*%Y 
+         -g/(g+1)*t(Y)%*%X1%*%solve(t(X1)%*%X1)%*%t(X1)%*%Y)}
+  return(m)
+}
+```
+```{r 12_fun2, echo=TRUE}
+# Echantilloneur de gibbs
+########################################################
+echGibbs = function(niter, X, Y, n, g){
+  # initialisation
+    nC = dim(X)[2]
+    gamma = matrix(F, nrow = niter, ncol = nC-1)
+    gamma0 = sample(c(T, F), size = nC-1, replace = TRUE) # valeur initiale aléatoire
+    lkd = rep(0, niter)
+    modelnumber = rep(0, niter)
+  # boucle
+    oldgamma = gamma0
+    for(i in 1:niter){
+      newgamma = oldgamma
+      for(j in 1:nC-1){
+        g1 = newgamma; g1[j]=TRUE
+        g2 = newgamma; g2[j]=FALSE
+        ml1 = marglkd(g1, X, Y, n, g)
+        ml2 = marglkd(g2, X, Y, n, g)
+        p = c(ml1,ml2)-min(ml1,ml2)
+        newgamma[j] = sample(c(T,F), size=1, prob=exp(p)) 
+      }
+      gamma[i,] = newgamma
+      lkd[i] = marglkd(newgamma, X, Y, n, g)
+      modelnumber[i] = sum(newgamma*2^(0:(nC-2)))
+      oldgamma = newgamma
+    }
+  # output
+    return(list(gamma=gamma, lkd=lkd, modelnumber=modelnumber))
+}
+```
+
+\newpage
+
+On met en place l'experience avec 10.000 iterations.
+
+```{r 12_op1, cache=TRUE, echo=TRUE}
+# echantillonnage
+  niter = 10000
+  resGibbs = echGibbs(niter, X, Y, n, g)
+  gamma = resGibbs$gamma
+  modelnumber = resGibbs$modelnumber
+```
+
+Pour vérifier la convergence, on lisse pour chaque covariable les valeurs booléennes obtenues, afin d'obtenir une estimation visuelle de la probabilité de la covariable. On obtient des courbes qui se stabilisent assez vite, avant 500 itérations, valeur que l'on prend pour le burn-in. Même on constate d'importantes oscillations autour de la valeur cible. Les courbes ne sont pas affichées dans ce rapport pour une meilleure lisibilité.
+
+```{r 12_op2, eval=FALSE}
+# controle de convergence
+  library(zoo)
+  for(i in 1:(dim(X)[2]-1)) plot(rollapply(gamma[,i], width=500, FUN=mean), type="l")
+```
+
+On affiche ci-dessous les modèles les plus probables pour notre étude. On s'aperçoit que les modèles les plus probables sont très parcimonieux. Ainsi, le modèle retenu n'a qu'un seul coefficient non nul, **taux_acces_attendu_premiere_bac**.
+
+```{r 12_op3, echo=FALSE}
+# modèles retenus
+  burnin = 500
+  gammab = modelnumber[(burnin+1):niter]
+  res = as.data.frame(table(gammab))
+  odo = order(res$Freq, decreasing=T)[1:5]
+  modcho = res$gammab[odo]
+  probtop5 = res$Freq[odo]/(niter-burnin)
+  indices = match(modcho, modelnumber)
+# mise en forme
+  R = data.frame(ifelse(t(gamma[indices, ]),"TRUE","."))
+  for (i in 1:5) names(R)[i] = sprintf("M%d:%4.1f%%", i, 100*probtop5[i])
+  row.names(R) = row.names(D)[2:nrow(D)]
+  R$"Fréquence" = colMeans(gamma)
+  kable(R,"latex", digits = 2, booktabs = T, linesep="") %>%
+  row_spec(c(8,9,13,15,16), bold = T, color = "#458b00") %>%
+  column_spec(c(1),bold = T) %>%
+  kable_styling(position = "center", latex_options = "striped", font_size = 8, full_width = F)
+```
+
+\newpage
+
+On compare ce résultat avec une approche fréquentiste. On fait une recherche un modèle avec un critère BIC, et on retrouve la même conclusion, à savoir un modèle avec un seul coefficient non nul, **taux_acces_attendu_premiere_bac**.
+
+```{r 12_bic1, eval=FALSE, include=FALSE}
+df = data[,c(6,7:23)]
+m1=lm(Barre~.,data = df)
+m2=lm(Barre~1,data = df)
+m_BIC = step(m2, direction="both", scope=list(upper=m1,lower=m2), k=log(nrow(df)))
+summary(m_BIC)
+```
+```{r 12_bic2, include=FALSE}
+df = data[,c(6,7:23)]
+m1=lm(Barre~.,data = df)
+m2=lm(Barre~1,data = df)
+m_BIC = step(m2, direction="both", scope=list(upper=m1,lower=m2), k=log(nrow(df)))
+```
+```{r 12_bic3, echo=FALSE}
+summary(m_BIC)
+```
+
+&nbsp;
+
+#### **1.3. Mutations en mathématiques et en anglais**
+
+============================================================
+On se concentre maintenant uniquement sur les mutations en mathématiques et en anglais. Répéter l’analyse pour chacune de ces deux catégories. Que penser de l’hypothèse que les covariables agissent de la même manière dans ces deux disciplines ?  
+============================================================
+
+&nbsp;
+
+**On répéte l’analyse pour chacune de ces deux catégories, comme détaillé ci-après. Dans les 2 cas, les approches fréquentistes et bayésiennes sont cohérentes. En revanche, les modèles résultants sont nettement différents. Cela tend à réfuter l’hypothèse que les covariables agissent de la même manière dans ces deux disciplines MATHS et ANGLAIS.**
+
+\newpage
+
+##### **1.3.1. MATHS**
+
+On travaille dans cette partie sur les infdividus **data$Matiere=="MATHS"**. L'approche bayésienne et l'échantillonneur de Gibbs nous mène à nouveau vers un modèle très réduit avec pour seul coefficient non nul celui de **taux_brut_de_reussite_serie_es**. Ce résultat est à prendre avec prudence, car le modèle retenu a somme toute une probabilité relativement faible de **3.1%**. En revanche, si l'on regarde les fréquences d'apparition, 2 covariables sortent du lot: **taux_brut_de_reussite_serie_l** et **taux_brut_de_reussite_serie_es**.
+
+```{r 131_bayes, echo=FALSE, cache=TRUE}
+# Mise en forme des données
+  Y = data[data$Matiere=="MATHS", 6]
+  X = cbind(1,as.matrix(data[data$Matiere=="MATHS", 7:23]))
+  n = length(Y)
+# A priori de Zellner
+  g=n
+# echantillonnage
+  niter = 10000
+  resGibbs = echGibbs(niter, X, Y, n, g)
+  gamma = resGibbs$gamma
+  modelnumber = resGibbs$modelnumber
+# modèles retenus
+  burnin = 500
+  gammab = modelnumber[(burnin+1):niter]
+  res = as.data.frame(table(gammab))
+  odo = order(res$Freq, decreasing=T)[1:5]
+  modcho = res$gammab[odo]
+  probtop5 = res$Freq[odo]/(niter-burnin)
+  indices = match(modcho, modelnumber)
+# mise en forme
+  R = data.frame(ifelse(t(gamma[indices, ]),"TRUE","."))
+  for (i in 1:5) names(R)[i] = sprintf("M%d:%4.1f%%", i, 100*probtop5[i])
+  row.names(R) = row.names(D)[2:nrow(D)]
+  R$"Fréquence" = colMeans(gamma)
+  kable(R,"latex", digits = 2, booktabs = T, linesep="") %>%
+  row_spec(c(4,5,14,15), bold = T, color = "#458b00") %>%
+  column_spec(c(1),bold = T) %>%
+  kable_styling(position = "center", latex_options = "striped", font_size = 8, full_width = F)
+```
+
+L'approche fréquentiste, avec un choix de modèle selon le critère BIC, confirme le modèle trouvé avec l'approche bayésienne.
+
+```{r 131_bic2, include=FALSE}
+df = data[data$Matiere=="MATHS",c(6,7:23)]
+m1=lm(Barre~.,data = df)
+m2=lm(Barre~1,data = df)
+m_BIC = step(m2, direction="both", scope=list(upper=m1,lower=m2), k=log(nrow(df)))
+```
+```{r 131_bic3, echo=FALSE}
+summary(m_BIC)
+```
+
+\newpage
+
+##### **1.3.2. ANGLAIS**
+
+On travaille dans cette partie sur les infdividus **data$Matiere=="ANGLAIS"**. L'approche bayésienne et l'échantillonneur de Gibbs nous mène à nouveau vers un modèle très réduit avec deux coefficients non nuls, **taux_brut_de_reussite_serie_es** et **taux_reussite_attendu_serie_l**. Ce résultat est à prendre avec prudence, car le modèle retenu a somme toute une probabilité relativement faible de **1.1%**. On peut même se demander si un choix de modèle pertinent se dégage réellement de cette étude, tellement les probabilités sont faibles pour les modèles mis en avant par l'échantilloneur de Gibbs.
+
+```{r 132_bayes, echo=FALSE, cache=TRUE}
+# Mise en forme des données
+  Y = data[data$Matiere=="ANGLAIS", 6]
+  X = cbind(1,as.matrix(data[data$Matiere=="ANGLAIS", 7:23]))
+  n = length(Y)
+# A priori de Zellner
+  g=n
+# echantillonnage
+  niter = 10000
+  resGibbs = echGibbs(niter, X, Y, n, g)
+  gamma = resGibbs$gamma
+  modelnumber = resGibbs$modelnumber
+# modèles retenus
+  burnin = 500
+  gammab = modelnumber[(burnin+1):niter]
+  res = as.data.frame(table(gammab))
+  odo = order(res$Freq, decreasing=T)[1:5]
+  modcho = res$gammab[odo]
+  probtop5 = res$Freq[odo]/(niter-burnin)
+  indices = match(modcho, modelnumber)
+# mise en forme
+  R = data.frame(ifelse(t(gamma[indices, ]),"TRUE","."))
+  for (i in 1:5) names(R)[i] = sprintf("M%d:%4.1f%%", i, 100*probtop5[i])
+  row.names(R) = row.names(D)[2:nrow(D)]
+  R$"Fréquence" = colMeans(gamma)
+  kable(R,"latex", digits = 2, booktabs = T, linesep="") %>%
+  row_spec(c(1,5,7,9), bold = T, color = "#458b00") %>%
+  column_spec(c(1),bold = T) %>%
+  kable_styling(position = "center", latex_options = "striped", font_size = 8, full_width = F)
+```
+
+L'approche fréquentiste, avec un choix de modèle selon le critère BIC, conclue sur des coefficients **tous nuls**, ce qui confirme les doutes quant-aux résultats de l'approche bayésienne.
+
+```{r 132_bic2, include=FALSE}
+df = data[data$Matiere=="ANGLAIS",c(6,7:23)]
+m1=lm(Barre~.,data = df)
+m2=lm(Barre~1,data = df)
+m_BIC = step(m2, direction="both", scope=list(upper=m1,lower=m2), k=log(nrow(df)))
+```
+```{r 132_bic3, echo=FALSE}
+summary(m_BIC)
+```
+
+\newpage
+
+# **2. Loi de Pareto**
+
+On ignore maintenant les covariables, et on s’intéresse uniquement à la loi du nombre de points nécessaire (colonne **Barre**). La loi gaussienne peut paraitre peu pertinente pour ces données : on va plutôt proposer une loi de Pareto. Pour $m > 0$ et $\alpha > 0$, on dit que $Z \sim Pareto(m,\alpha)$ si $Z$ est à valeur dans $[m, +\infty[$ de densité
+
+\begin{center}
+$f_{Z}(z;m,\alpha)=\alpha \displaystyle \frac{m^{\alpha}}{z^{\alpha+1}}\mathbb{I}_{\{z\ge m\}}$
+\end{center}
+
+On impose $m = 21$ au vue des données. En effet, la valeur minimale de **Barre** étant 21, il nous faut prendre une valeur de $m \ge 21$ pour pouvoir manipuler des vraisemblances non nulles. Aussi, pour toute la suite, on omettra de considérer $\mathbb{I}_{\{z\ge m\}}$ dans nos raisonnement, sachant que cette valeur sera toujours égale à 1.
+
+<!-- REMARQUES PERSO -->
+<!--  - prior selon theta >> loi selon X >> posterior selon theta
+<!--  - Vitesse estimation : si bon resultat, choisir le plus rapide -->
+<!--     1. solution analytique -->
+<!--     2. monte carlo classique facile a simuler -->
+<!--     2. importance sampling pour appuyer certaines zones -->
+<!--     3. metropolis-hasting si lois trop compliques pour etre simuler -->
+<!--  - Metropolis-Hastings ? NON -->
+<!--     >> on l'utilise pour generer des distributions compliquees a simuler, ce qui n'est pas le cas ici. -->
+<!--     >> fonctionne sur les rapports de probabilite a posteriori, entre 2 iterations successives. -->
+<!--     >> feuille3 -->
+<!--  - Importance sampling ? MAYBE -->
+<!--     >> version amelioree du monte-carlo classique -->
+<!--     >> on simule selon une une autre loi, et on multiplie par le rapport des densites des priors (vraie/instrumentale) -->
+<!--     >> feuille2 : Q6 -->
+
+#### **2.4. Générer des réalisations de Pareto**
+
+============================================================
+Chercher un package R permettant de générer des réalisations d’une loi de Pareto. Visualiser l’impact du paramètre $\alpha$.  
+============================================================
+
+&nbsp;
+
+Pour générer des réalisations d’une loi de Pareto, on choisit d'utiliser le package **actuar**, avec la fonction **dpareto1** pour obtenir la densité, et la fonction **rpareto1** pour générer les réalisations.
+
+Comme on peu facilement le montrer à partir de la fonction de densité, le maximum est atteint en $z=m$ avec une valeur $f_{Z}(m;m,\alpha)=\frac{\alpha}{m}$. Ainsi, le maximum augmente avec $\alpha$. En revanche, plus $\alpha$ est grand, plus la descente est abrupte. Ci-dessous, on affiche les densités pour 6 valeurs différentes de $\alpha$, et on les superpose à l'histogramme de **Barre**. Des quelques valeurs testées pour le paramètre $\alpha$, ce sont les valeurs $\alpha = 0.4$  et $\alpha = 0.8$ qui semblent la plus en adéquation avec l'histogramme: **on s'attend donc à une estimation de la valeur de $\alpha$ entre 0.4 et 0.8**.
+
+```{r 24_alpha, echo=FALSE, fig.height=8, fig.width=14, out.width="100%"}
+XLIM = c(-100,900)
+YLIM = c(-.0002,.009)
+BREAKS = seq(0,8000,length.out = 801)
+COL = "#3C5A87"
+LWD = 4
+PAR = c(.1,2,.4,5,.8,10)
+par(mfrow = c(3, 2))
+M = 21
+ind=0
+for (k in 1:length(PAR)){
+  hist(data$Barre,freq=F,main="",xlab="",xlim=XLIM,ylim=YLIM,breaks=BREAKS)
+  curve(dpareto1(x,PAR[ind+k],M),add=T,col=COL,lwd=LWD)
+  title(sprintf("alpha = %.1f",PAR[ind+k]))
+}
+```
+
+
+#### **2.5. Choix de la loi a priori**
+
+============================================================
+Choisir une loi a priori pour $\alpha$.  
+============================================================
+
+&nbsp;
+
+Sans connaissance particulière, nous choisissons de déterminer la prior de Jeffrey.  
+Dans un premier temps, on dérive 2 fois la log-vraisemblance.
+
+> $l(\alpha|z) = log(\alpha) + \alpha.log(m) - (\alpha+1).log(z)$  
+
+> $\displaystyle \frac{\partial{l}}{\partial{\alpha}} = \displaystyle \frac{1}{\alpha} + log(m) - log(z)$  
+
+> $\displaystyle \frac{\partial^2 l}{\partial{\alpha^2}} = \displaystyle -\frac{1}{\alpha^2}$  
+
+Cette dernière valeur ne dépend plus de z, donc est égale à son espérance.  
+On en déduit donc l'information de Fisher pour la loi de Pareto.
+
+> $I(\alpha) = -E\left[\displaystyle \frac{\partial^2 l}{\partial{\alpha^2}}\right] = \displaystyle \frac{1}{\alpha^2}$  
+
+On en déduit la prior de Jeffrey.
+
+> $\pi(\alpha) \propto \sqrt{I(\alpha)} = \displaystyle \frac{1}{\alpha}$  
+
+Cette loi est impropre, mais comme nous allons le voir ensuite, la posterior associée sera elle bien définie.  
+
+
+#### **2.6. Identification de la loi a posteriori**
+
+============================================================
+Donner la loi a posteriori pour $\alpha$.  
+============================================================
+
+&nbsp;
+
+Soit $n$ le nombre d'individus.
+
+> $\pi(\alpha|Z) \:\propto\: \pi(\alpha).L(\alpha|Z) \:\propto\: \displaystyle \frac{1}{\alpha}\:.\:\prod_{i}\left(\alpha.\displaystyle \frac{m^{\alpha}}{z_{i}^{\alpha+1}} \right) \:\propto\: \alpha^{n-1} \:.\: e^{-\alpha\:.\:\sum_{i}log(\frac{z_{i}}{m})}$  
+
+On reconnait une loi Gamma.
+
+> $\alpha_{posterior} \:\sim\: \Gamma(n,\sum_{i}log(\frac{z_{i}}{m}))$
+
+\newpage
+
+#### **2.7. Tirage d'un échantillon de la loi a posteriori**
+
+============================================================
+Par la méthode de votre choix, tirer un échantillon de la loi a posteriori de $\alpha$.  Donner un intervalle de crédibilité à 95%.  
+============================================================
+
+&nbsp;
+
+A l'aide de la fonction **rgamma**, on tire un échantillon de la loi a posteriori.
+
+```{r 27_tirage, echo=TRUE, fig.height=4, fig.width=14, out.width="100%"}
+# parametres
+  Z = data$Barre
+  n = length(Z)
+  m = 21
+  S = sum(log(Z/m))
+  niter = 10000
+# tirage
+  alpha = rgamma(niter, n, S)
+  hist(alpha)
+```
+
+L'histogramme confirme l'intuition que nous avions eu en testant les différentes valeurs de pour le paramètre $\alpha$, à savoir une estimation entre 0.4 et 0.8. Ci-dessous, les intervalles de crédibilités à 95%. On constate que les valeurs expérimentales sont tres proches des valeurs théoriques.
+
+```{r 27_intervalle1, echo=TRUE}
+# Intervalles de crédibilité experimental
+  quantile(alpha, c(0.025, 0.975))
+```
+```{r 27_intervalle2, echo=TRUE}
+# Intervalles de crédibilité theorique
+  qgamma(c(.025, .975), n, S)
+```
+
+\newpage
+
+Enfin, la figure ci-dessous nous montre, la bonne convergence de notre estimateur.
+
+```{r 27_convergence, echo=TRUE, fig.height=4, fig.width=14, out.width="100%"}
+# convergence du monte-carlo classique
+  plot(1:niter, cumsum(alpha)/(1:niter), type="l", ylim=c(0.440,0.460))
+  abline(h=n/S, col=2) # esperance analytique
+```
+
+Pour le fun, on fait un échantillonnage d'importance avec comme distribution instrumentale la loi gaussienne, mais cela n'améliore pas notre estimateur qui avait déjà convergé rapidement avec le Monte-Carlo classique.
+
+```{r 27_importance, echo=TRUE, fig.height=4, fig.width=14, out.width="100%"}
+# convergence de l'échantillonnage d'importance
+  tirage = rnorm(niter, n/S, sqrt(n)/S)
+  alpha_bis = tirage * dgamma(tirage, n, S) / dnorm(tirage, n/S, sqrt(n)/S)
+  plot(1:niter, cumsum(alpha_bis)/(1:niter), type="l", ylim=c(0.440,0.460))
+  abline(h=n/S, col=2) # esperance analytique
+```
+
+\newpage
+
+#### **2.8. Mutations en mathématiques et en anglais**
+
+============================================================
+On se concentre uniquement sur les mutations en mathématiques et en anglais. Répéter l’analyse pour chacune de ces deux catégories. Que pensez-vous de l’hypothèse que $\alpha_{maths}=\alpha_{anglais}$ ?  
+============================================================
+
+&nbsp;
+
+##### **2.8.1. Densités des lois a posteriori**
+
+On trace les densités des lois a posteriori, pour chacune des 2 catégories.
+
+```{r 28_tirage, echo=TRUE, fig.height=8, fig.width=14, out.width="100%"}
+# parametres
+  Z1 = data$Barre[data$Matiere=="ANGLAIS"]
+  Z2 = data$Barre[data$Matiere=="MATHS"]
+  n1 = length(Z1)
+  n2 = length(Z2)
+  S1 = sum(log(Z1/m))
+  S2 = sum(log(Z2/m))
+  niter = 10000
+# densites
+  par(mfrow=c(2, 1))
+  curve(dgamma(x, n1+n2, S1+S2), xlim=c(0, 1), main="Posterior : 1 alpha", ylab="density")
+  curve(dgamma(x, n1, S1),       xlim=c(0, 1), main="Posterior : 2 alpha", ylab="density")
+  curve(dgamma(x, n2, S2), col=2, add=T)
+  str1 = sprintf("ANGLAIS : %.3f",n1/S1)
+  str2 = sprintf("MATHS   : %.3f",n2/S2)
+  legend("topright", c(str1,str2), col=1:2, lty=1)
+```
+
+
+Les 2 distributions semblent légèrement translatées, avec $\hat{\alpha}_{ANGLAIS} = 0.485$ et $\hat{\alpha}_{MATHS} = 0.505$. Intuitivement, on veut donc rejeter l'hypothèse $\alpha_{maths}=\alpha_{anglais}$.  
+
+\newpage
+
+##### **2.8.2. Facteur de Bayes**
+
+Pour confirmer cette intuition, on décide de calculer le facteur de Bayes pour comparer les 2 modèles suivants.  
+
+> $m_{0}(z)$ : un seul alpha commun au 2 catégories.  
+> $m_{1}(z)$ : un alpha par catégorie.  
+
+Soient $n_{1}$ le nombre d'individus, $P_{1} = \prod_{i}z_{i}$ et $S_{1} = \sum_{i}log(\frac{z_{i}}{m}))$ pour la catégories **ANGLAIS**.  
+Soient $n_{2}$ le nombre d'individus, $P_{2} = \prod_{i}z_{i}$ et $S_{2} = \sum_{i}log(\frac{z_{i}}{m}))$ pour la catégories **MATHS**. 
+
+Le facteur de Bayes s'écrit comme suit
+
+> $B \:=\: \displaystyle \frac{m_{0}(z)}{m_{1}(z)}$
+
+__*Modèle $m_{0}(z)$*__  
+
+> $m_{0}(z) \:=\: \int L(\alpha|Z) \:.\: \pi(\alpha) \: d\alpha \:=\: \displaystyle \frac{1}{P_{1}.P_{2}} \int \alpha^{n_{1}+n_{2}-1} \:.\: e^{-\alpha\:.\:(S_{1}+S_{2})} \: d\alpha$
+
+> $m_{0}(z) \:=\: \displaystyle \frac{\Gamma(n_{1}+n_{2}-1)}{P_{1}.P_{2}.(S_{1}+S_{2})^{n_{1}+n_{2}-1}}\int \alpha \:.\: \left[\displaystyle \frac{(S_{1}+S_{2})^{n_{1}+n_{2}-1}}{\Gamma(n_{1}+n_{2}-1)} \:.\:\alpha^{n_{1}+n_{2}-1-1} \:.\: e^{-\alpha\:.\:(S_{1}+S_{2})}\right] \: d\alpha$
+
+&nbsp;
+
+On reconnait l'espérance d'une loi $\Gamma(n_{1}+n_{2}-1,S_{1} + S_{2})$, donc 
+
+> $m_{0}(z) \:=\: \displaystyle \frac{\Gamma(n_{1}+n_{2}-1)}{P_{1}.P_{2}.(S_{1}+S_{2})^{n_{1}+n_{2}-1}} \:.\: \displaystyle \frac{n_{1}+n_{2}-1}{S_{1} + S_{2}} \:=\: \frac{\Gamma(n_{1}+n_{2})}{P_{1}.P_{2}.(S_{1}+S_{2})^{n_{1}+n_{2}}}$
+
+&nbsp;
+
+__*Modèle $m_{1}(z)$*__  
+
+Par un raisonnement identique, on en déduit 
+
+> $m_{1}(z) \:=\: \displaystyle \frac{\Gamma(n_{1})}{P_{1}.(S_{1})^{n_{1}}} \:.\: \displaystyle \frac{\Gamma(n_{2})}{P_{2}.(S_{2})^{n_{2}}}$
+
+&nbsp;
+
+On peut donc calculer le facteur de Bayes. Pour le calcul, on va utiliser log-gamma pour éviter d'atteindre des valeurs non-manipulables par l'ordinateur.  
+
+```{r 28_bayes, echo=TRUE}
+# Facteur de Bayes [on ne calcule pas P1 et P2, qui se neutralisent dans B]
+  log_m0 = lgamma(n1+n2)-(n1+n2)*log(S1+S2)
+  log_m1 = lgamma(n1)+lgamma(n2)-n1*log(S1)-n2*log(S2)
+  B = exp(log_m0-log_m1)
+  sprintf("log10[Bayes Factor] = %.2f",log10(B))
+```
+
+Le facteur de Bayes est en faveur du modèle $m_{0}(z)$, ce qui tend à faire **accepter** l'hypothèse $\alpha_{maths}=\alpha_{anglais}$, contrairement à notre intuition précédente. En revanche, ce résultat est à prendre avec des pincettes, car **l'évidence est faible (<0.5)**.
+
+
+
