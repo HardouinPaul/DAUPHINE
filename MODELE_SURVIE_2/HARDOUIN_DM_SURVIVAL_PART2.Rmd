@@ -1,0 +1,228 @@
+---
+title: "Survival analysis or classification ?"
+author: "Paul Hardouin"
+date: "31 Janvier  2020"
+output:
+  pdf_document:
+    fig_height: 3
+    fig_width: 7
+    highlight: zenburn
+    toc: yes
+    toc_depth: 4
+  html_document:
+    fig_height: 4
+    highlight: textmate
+    theme: sandstone
+    toc: yes
+    toc_depth: 4
+subtitle: Devoir maison obligatoire (Dauphine)
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+\newpage
+
+Nous travaillons sur le jeu de données **wpbc**, disponible sur  
+*https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wpbc.data*.  
+
+Il est présenté sur  
+*https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wpbc.names*.  
+
+On souhaite prévoir la probabilité de rechute ("recurrent") à 24 mois. Pour cela, on veut comparer les méthodes de l'analyse de survie (modèles de Cox, survival random forests, ...) aux méthodes de classification. Les mesures de performances (notamment l'AUC) se feront sur un sous-échantillon de test forme de 20% a 30% des données, en faisant attention à bien stratifier.
+
+&nbsp;
+
+### **1. Création du label pour la tâche de classification**
+
+On charge les librairies.
+
+```{r 1_lib_a, include=FALSE}
+library(survival)
+library(fitdistrplus)
+library(tidyverse)
+library(KMsurv)
+library(ggfortify)
+library(caret)
+library(pROC)
+```
+```{r 1_lib_b, eval=FALSE, include=TRUE}
+library(survival)
+library(fitdistrplus)
+library(tidyverse)
+library(KMsurv)
+library(ggfortify)
+library(caret)
+library(pROC)
+```
+
+On lit les données, on renomme les variables, et on transforme les variables **lymph** et **recur** en données numériques.
+
+```{r 1_read_a, include=FALSE}
+wpbc = read_csv("wpbc.data",col_names = F)
+names(wpbc) = c("id","recur","time",paste0("V",c(1:30)),"tumor_size","lymph")
+wpbc$lymph=as.numeric(wpbc$lymph)
+wpbc$recur=as.numeric(wpbc$recur=="R")
+```
+```{r 1_read_b, eval=FALSE, include=TRUE}
+wpbc = read_csv("wpbc.data",col_names = F)
+names(wpbc) = c("id","recur","time",paste0("V",c(1:30)),"tumor_size","lymph")
+wpbc$lymph=as.numeric(wpbc$lymph)
+wpbc$recur=as.numeric(wpbc$recur=="R")
+```
+
+On crée ensuite le label qui sera nécessaire pour la tâche de classification.
+
+```{r 1_label, echo=TRUE}
+wpbc$label = wpbc$recur & wpbc$time<=24
+wpbc$label=as.numeric(wpbc$label)
+```
+
+Quelques individus n'ont pas de valeur pour la variable **lymph**. Comme cette variable est pertinente pour les modèles de prédiction (comme nous le verrons par la suite), et que cela ne concerne que 4/198 individus, répartis à proportion vis-à-vis du label, nous faisons le choix de supprimer ces 4 individus du jeu de données.
+
+```{r 1_NA, echo=TRUE}
+wpbc = wpbc[!is.na(wpbc$lymph),]
+```
+
+\newpage
+
+### **2. Création des jeux TRAIN / TEST**
+
+On fixe la racine du générateur aléatoire. On crée ensuite un jeu de données test [30%] et un jeu train [70%], en faisant attention à bien stratifier selon le label de classification.
+
+```{r 2_NA, echo=TRUE}
+set.seed(123)
+train.index <- createDataPartition(wpbc$label, p = .7, list = FALSE)
+train <- wpbc[ train.index,]
+test  <- wpbc[-train.index,]
+```
+
+&nbsp;
+
+### **3. Construction d'un modèle de Cox et d'un modèle de régression logistique**
+
+#### **3.1. Construction d'un modèle de Cox**
+
+Pour ce modèle, on disqualifie d'entrée les covariables **id** et **label**.  
+On fait une recherche pas à pas en utilisant le critère AIC.
+
+&nbsp;
+
+**COX : on obtient un modèle avec 7 covariables.**
+
+```{r 31_COX_a, include=TRUE}
+cox_model = coxph(Surv(time,recur)~.-id-label, data = train)
+cox_AIC = stepAIC(cox_model, trace = F)
+cox_AIC
+```
+
+\newpage
+
+#### **3.2. Construction d'un modèle de régression logistique**
+
+Pour ce modèle, on disqualifie d'entrée les covariables **id**, **recur**, et **time**.  
+On fait une recherche pas à pas en utilisant le critère AIC (par defaut).  
+On fait une recherche avec la méthode progressive.  
+
+&nbsp;
+
+**CLASSIFICATION : on obtient un modèle avec 5 covariables.**
+
+```{r 32_GLM_c, eval=FALSE, include=TRUE}
+m1 = glm(label~.-id-recur-time, family=binomial, data=train)
+m0 = glm(label~1,               family=binomial, data=train)
+glm_AIC = step(m0, direction="both", scope=list(upper=m1,lower=m0))
+summary(glm_AIC)
+```
+```{r 32_GLM_a, include=FALSE}
+m1 = glm(label~.-id-recur-time, family=binomial, data=train)
+m0 = glm(label~1,               family=binomial, data=train)
+glm_AIC = step(m0, direction="both", scope=list(upper=m1,lower=m0))
+```
+```{r 32_GLM_b, echo=FALSE}
+summary(glm_AIC)
+```
+
+\newpage
+
+### **4. Prédiction des probabilités de rechute à 24 mois et matrices de confusion**
+
+#### **4.1. Prédicion avec le modèle de Cox**
+
+Pour faire notre prédiction de rechute, on cherche d'abord à prédire la probabilité de survie (non rechute) à 24 mois. On prend alors la probabilité complémentaire pour obtenir la probabilité de rechute à 24 mois.
+
+```{r 41_coxPred, echo = TRUE}
+# Modèle de prédiction
+  cox_final = coxph(cox_AIC$call$formula, data = train)
+  prediction_model = survfit(cox_final)
+  marqueurs = predict(cox_final,test)
+  time = prediction_model$time
+# Prédiction : on fait 1-.. car on veut pr
+  cox_prediction = 1-exp(-prediction_model$cumhaz[time==24]*exp(marqueurs))
+  cox_classification = round(cox_prediction)
+# Matrice de confusion
+  confusionMatrix(factor(cox_classification),factor(test$label))
+```
+
+\newpage
+
+#### **4.2. Prédiction avec le modèle logistique**
+
+```{r 41_glmPred, echo = TRUE}
+# Modèle de prédiction
+   glm_final = glm(glm_AIC$call$formula, family = binomial, data = train)
+# Prédiction 
+  glm_prediction = predict(glm_final, test, type = "response")
+  glm_classification = round(glm_prediction)
+# Matrice de confusion
+  confusionMatrix(factor(glm_classification),factor(test$label))
+```
+
+
+#### **4.3. Comparaison des prédictions **
+
+Les matrices de confusion montrent une une **accuracy** légèrement meilleure avec le modèle logistique qu'avec le modèle de Cox, même si les ordres de grandeur sont similaires.
+
+Modèle  | Accuracy | FP | VP | FN | VN
+------- | -------- | -- | -- | -- | --
+COX     | 0.7931   | 3  | 2  | 9  | 44
+GLM     | 0.8276   | 1  | 2  | 9  | 46   
+
+De plus que la taille de l'échantillon de test est faible. On voit que la différence se fait seulement sur 2 faux positifs au lieu de 2 vrais négatifs.
+
+\newpage
+
+### **5. Courbes ROC**
+
+```{r 5_auc_a, eval=FALSE, include=TRUE}
+# Plan d'affichage
+  par(mfrow=c(1,2))
+# ROC : Cox model
+  roc_cox = roc(test$label,cox_prediction,smoothed=T,ci=F,plot=TRUE,print.auc=TRUE)
+  title("Cox model",outer = F)
+# ROC : logistic model
+  roc_glm = roc(test$label,glm_prediction,smoothed=T,ci=F,plot=TRUE,print.auc=TRUE)
+  title("Logistic model",outer = F)
+```
+
+```{r 5_auc_b, echo=FALSE, error=FALSE, warning=FALSE}
+# Plan d'affichage
+  par(mfrow=c(1,2))
+# ROC : Cox model
+  roc_cox = roc(test$label,cox_prediction,smoothed=T,ci=F,plot=TRUE,print.auc=TRUE)
+  title("Cox model",outer = F)
+# ROC : logistic model
+  roc_glm = roc(test$label,glm_prediction,smoothed=T,ci=F,plot=TRUE,print.auc=TRUE)
+  title("Logistic model",outer = F)
+```
+
+### **6. Conclusion**
+
+On a ici 2 modèles avec des performances à peu près équivalentes en terme d'AUC.  
+On peut noter des ruptures plus nettes de la courbe ROC pour le modèle de Cox.  
+Un plus grand echantillon et/ou du bootstrapping nous permettrait d'affiner cette comparaison.
+
+
+
+
