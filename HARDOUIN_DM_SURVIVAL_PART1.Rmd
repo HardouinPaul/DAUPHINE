@@ -1,0 +1,394 @@
+---
+title: "Exercise 8.11 of Klein and Moeschberger 2005"
+author: "Paul Hardouin"
+date: "December 11, 2019"
+output:
+  pdf_document:
+    fig_height: 3
+    fig_width: 7
+    highlight: zenburn
+    toc: yes
+    toc_depth: 4
+  html_document:
+    fig_height: 4
+    highlight: textmate
+    theme: sandstone
+    toc: yes
+    toc_depth: 4
+subtitle: Devoir maison obligatoire (Dauphine)
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+\newpage
+We study data gathered from annual personal interviews conducted for the National Longitudinal Survey of Youth (NLSY) from 1979 through 1986. This data was used to study whether or not the mother’s feeding choice protected the infant against hospitalized pneumonia in the first year of life. Ages of young children at the time they were hospitalized with pneumonia were recorded as well as the observed ages of those infants that were not hospitalized with pneumonia during the study period. The data pneumon is available in R package KMsurv. Use the discrete method for handling ties in the following.
+
+&nbsp;
+
+### **1. Load data**
+
+============================================================
+Check if the variables have been correcly imported, especially the factors.  
+============================================================
+
+We load librairies.
+```{r surv_10a, include=FALSE}
+library(survival)
+library(fitdistrplus)
+library(tidyverse)
+library(KMsurv)
+library(ggfortify)
+```
+```{r surv_10b, eval=FALSE, include=TRUE}
+library(survival)
+library(fitdistrplus)
+library(tidyverse)
+library(KMsurv)
+library(ggfortify)
+```
+
+We load data.
+```{r surv_11, echo = TRUE}
+data("pneumon")
+```
+
+<!-- -------------------------------------------------------------------------- -->
+<!-- Format -->
+
+<!-- This data frame contains the following columns: -->
+
+<!-- chldage -->
+<!--     Age child had pneumonia, months  -->
+<!-- hospital -->
+<!--     Indicator for hospitalization for pneumonia (1=yes, 0=no)  -->
+<!-- mthage -->
+<!--     Age of the mother, years  -->
+<!-- urban -->
+<!--     Urban environment for mother (1=yes, 0=no)  -->
+<!-- alcohol -->
+<!--     Alcohol use by mother during pregnancy (1=yes, 0=no)  -->
+<!-- smoke -->
+<!--     Cigarette use by mother during pregnancy (1=yes, 0=no)  -->
+<!-- region -->
+<!--     Region of the coutry (1=northeast, 2=north central, 3=south, 4=west)  -->
+<!-- poverty -->
+<!--     Mother at poverty level (1=yes, 0=no)  -->
+<!-- bweight -->
+<!--     Normal birthweight (>5.5 lbs.) (1=yes, 0=no)  -->
+<!-- race -->
+<!--     Race of the mother (1=white, 2=black, 3=other)  -->
+<!-- education -->
+<!--     Education of the mother, years of school  -->
+<!-- nsibs -->
+<!--     Number of siblings of the child  -->
+<!-- wmonth -->
+<!--     Month the child was weaned  -->
+<!-- sfmonth -->
+<!--     Month the child on solid food  -->
+<!-- agepn -->
+<!--     Age child in the hospital for pneumonia, months  -->
+<!-- -------------------------------------------------------------------------- -->
+
+We suppress useless attribute.
+```{r surv_12, echo = TRUE}
+pneumon = pneumon[,!colnames(pneumon) %in% c("agepn")]
+```
+
+We encode categorial data as factor.
+```{r surv_13, echo = TRUE}
+pneumon$urban = as.factor(pneumon$urban)
+pneumon$alcohol = as.factor(pneumon$alcohol)
+pneumon$smoke = as.factor(pneumon$smoke)
+pneumon$region = as.factor(pneumon$region)
+pneumon$poverty = as.factor(pneumon$poverty)
+pneumon$bweight = as.factor(pneumon$bweight)
+pneumon$race = as.factor(pneumon$race)
+```
+
+\newpage
+### **2. Kaplan-Meier estimator**
+
+============================================================
+Plot the Kaplan-Meier estimator for the survival function of the age at pneumonia. Give an estimation and a confidence interval for the probability for a newborn of not having developed pneumonia at 6 months.  
+============================================================
+
+```{r surv_20, echo = TRUE}
+KMfit = survfit(Surv(chldage,hospital)~1, data = pneumon)
+autoplot(KMfit)
+summary(KMfit)
+```
+
+At 6 months, the probability for a newborn of not having developed pneumonia is **98.1\%** with the confidence interval [**97.6\%** - **98.6\%**].  
+
+\newpage
+### **3. Breast fedding / not fedding distributions**
+
+============================================================
+Construct a dummy variable Z = 1 if infants were breast fed at birth, 0 if infants were never breast fed, and test the hypothesis $H_{0}$: there is not difference in distributions of age at first pneumonia between child whether were breast fed or not.  
+============================================================
+
+We build a dummy variable $Z$ to describe the breast fedding or not.
+```{r surv_30, echo = TRUE}
+pneumon$Z = as.integer(pneumon$wmonth>0)
+autoplot(survfit(Surv(chldage,hospital)~Z, data = pneumon))
+```
+
+On the previous figure, we can oberve 2 distinct curves. It makes us assume that the distributions will be different between the 2 groups, and that the hypothesis $H_{0}$ will be rejected. Let's make a log-rank test to validate this observation.
+
+```{r surv_31, echo = TRUE}
+# LOG-RANK test
+survdiff(Surv(chldage,hospital)~Z, data = pneumon)
+```
+
+We got a very low p-value = 1e-4, and the hypothesis $H_{0}$ is effectively rejected.
+\newpage
+
+### **4. Breast fedding / not fedding hazard ratio**
+
+============================================================
+Test the hypothesis $H_{0}$: $\beta_{breast}^{*}=0$, i.e., the survival functions for the two types of breast feeding are equal, using the likehood ratio, and the Wald tests. Find the estimate of $\beta_{breast}^{*}$, $\hat{\beta}_{breast}^{*}$, its standard error, and its relative risk.  
+============================================================
+
+```{r surv_40, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z, data = pneumon))
+
+```
+
+&nbsp;
+
+The LRT test p-value = 5e-5, so the hypothesis $H_{0}$: $\beta_{breast}^{*}=0$ is rejected according this test.  
+The wald test p-value = 2e-4, so the hypothesis $H_{0}$: $\beta_{breast}^{*}=0$ is rejected according this test.
+
+&nbsp;
+
+The estimate of $\beta_{breast}^{*}$ is $\hat{\beta}_{breast}^{*}=-1.0970=log(0.3339)$. The relative risk of modality **Breast fedding** is multiplied by 0.3339 compared to the relative risk of modality **Breast not fedding**. The standard error value is 0.023.
+
+\newpage
+
+### **5. Bivariate Cox Model**
+
+============================================================
+Also available in the data set is information on other factors that may be associated with the timing of hospitalized pneumonia. These factors are age of the mother at the infant’s birth, rural-urban environment of the mother, use of alcohol by the mother (no drinks, less than one drink, 1-2 drinks, 3-4 drinks, or more than 4 drinks per month), mother’s cigarette use (none, less than 1 pack/day, 1 or more pack/day), region of country (northeast, north central, south, or west), birthweight of infant
+(less the 5.5 lbs or 5.5 lbs or more), poverty status of mother (yes/no), race of mother (white, black, or other), or number of siblings of infant. Test the hypothesis that the times to hospitalized pneumonia are the same for the two feeding groups adjusting for each of these factors in a separate model using the Wald test.  
+============================================================
+
+#### **5.1. Breast Feeding + age of the mother at birth**
+```{r surv_50, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+mthage, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 6e-4, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=0.3583\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **age of the mother**, we got a high p-value = 0.133, so this factor doesn't impact significantly the time to hospitalized pneumonia.
+\newpage
+
+#### **5.2. Breast Feeding + urban environnement of mother**
+```{r surv_51, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+urban, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 3e-4, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=0.3423\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **rural-urban environment of the mother**, we got a high p-value = 0.125, so this factor doesn't impact significantly the time to hospitalized pneumonia.
+\newpage
+
+#### **5.3. Breast Feeding + alcohol consumption of mother**
+```{r surv_52, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+alcohol, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 2e-4, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=0.3293\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **alcohol consumption of mother**, we got high p-values = [0.495 0.711 0.717 0.945], so this factor doesn't impact significantly the time to hospitalized pneumonia.
+\newpage
+
+#### **5.4. Breast Feeding + cigarette consumption of mother**
+```{r surv_53, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+smoke, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 4e-4, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=0.3494\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **cigarette consumption of mother**, we got high p-values = [0.002 0.049].
+As intuitively expected, the hazard rate is increased by the smoking mother modalities.
+
+* the risk of modality **less than one pack/day** is multiplied by 2.14 compared to the risk of modality **not smoking**
+* the risk of modality **more than one pack/day** is multiplied by 1.97 compared to the risk of modality **not smoking**
+
+Paradoxically, risk of **more than one pack/day** is multiplied by $\frac{1.97}{2.17}=0.92<1$ compared to risk of **less than one pack/day**. But 0.92 is very close to 1, so this last value is not so significant.
+\newpage
+
+#### **5.5. Breast Feeding + region**
+```{r surv_54, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+region, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 3e-4, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=0.3350\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **region**, we got high p-values = [0.629 0.257 0.313], so this factor doesn't impact significantly the time to hospitalized pneumonia.
+\newpage
+
+#### **5.6. Breast Feeding + poverty status of mother**
+```{r surv_55, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+poverty, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 2e-4, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=0.3356\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **poverty status of mother**, we got a high p-value = 0.738, so this factor doesn't impact significantly the time to hospitalized pneumonia.
+\newpage
+
+#### **5.7. Breast Feeding + birth weight**
+```{r surv_56, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+bweight, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 8e-4, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=0.3647\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **birth weight**, we got a quite low p-value = 0.076.
+The hazard rate is increased by the fact to have a weight higher than 5.5 lbs at birth. The risk of modality **more than 5.5 lbs at birth** is multiplied by 1.52 compared to the risk of modality **less than 5.5 lbs at birth**. This result is not intuitive, because a high weight at birth is normally a sign of good health.
+
+* maybe the definition of TRUE value is inverted ?
+* maybe this factor is not so signifiant : p-value is higher than 5\% ?
+
+\newpage
+
+#### **5.8. Breast Feeding + race of mother**
+```{r surv_57, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+race, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 6e-5, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=2993\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **race of mother**, we got high p-values = [0.102 0.773], so this factor doesn't impact significantly the time to hospitalized pneumonia.
+\newpage
+
+
+#### **5.9. Breast Feeding + number of siblings**
+```{r surv_58, echo = TRUE}
+summary(coxph(Surv(chldage,hospital)~Z+nsibs, data = pneumon))
+```
+
+&nbsp;
+
+About **breast feeding (Z)**, we have a low p-value = 4e-4, so $\beta_{breast}^{*}=0$ hypothesis is rejected. As $exp(coef_{breast})=0.3516\neq1$, it involves the the times to hospitalized pneumonia are different for the two feeding groups.  
+
+About the **number of siblings**, we got a low p-values = 0.014, so this factor impacts significantly the time to hospitalized pneumonia. The hazard rate increases when the number of sibling increase. Having a supplementary child multiplies the relative risk by 1.3212. It was intuitively expectable :  
+
+* when parents have more children to take care of, they have less time by child to take care of them.
+* when a child have siblings, they are a supplementary vector of disease contamination.
+
+\newpage
+
+#### **5.10. Conclusions**
+
+Looking the last bivariate cox models, we can select a list of pertinents factors that impact the times to hospitalized pneumonia are different for the two feeding groups.
+
+* Z
+* smoke
+* (birth weight) : to be confirmed/unconfirmed
+* number of siblings
+
+\newpage
+
+### **6. Multivariate Cox Model**
+
+============================================================
+Since one is primarily interested in comparing the two types of breast feeding, interest will center upon building a model with the view of testing the particular comparison of interest adjusting for the other non controllable fixed covariates in question 4. Build such a model using the Wald test.  
+============================================================
+
+#### **6.1. Cox Model**
+
+We build a cox model with all the factors. The p-values of the Wald tests are lower than 10\% for **Z**, **mthage**, **smoke** and **nsibs**. Finally, the doubts about influence of **birth weight** factor (question 5) are confirmed and we disqualify it. However, **mthage** is finally added.
+```{r surv_60, echo = TRUE}
+fit_total = coxph(Surv(chldage,hospital)~ Z + mthage + urban + alcohol + smoke + region + poverty + bweight + race + education + nsibs, data = pneumon)
+summary(fit_total)
+```
+
+#### **6.2. StepAIC**
+
+We decide to run a model selection with AIC research.  
+This selection confirmed conclusion of question 6.
+```{r surv_61, echo = TRUE}
+stepAIC(fit_total,trace = F)
+```
+
+\newpage
+
+### **7. Prediction**
+
+============================================================
+In the final model, predict the probability of not having developed pneumonia at 6 months for a newborn whith covariates.  
+
+Factors     | Values
+----------- | -------
+mthage      |  27
+urban       |   1
+alcohol     |   3
+smoke       |   0
+region      |   2
+poverty     |   1
+bweight     |   0
+race        |   1
+education   |  12
+nsibs       |   1
+wmonth      |   0
+sfmonth     |   0
+agepn       |   4
+============================================================
+
+&nbsp;
+
+We build final model with variables selection.
+```{r surv_70, echo = TRUE}
+fit_final = coxph(Surv(chldage,hospital)~ Z + mthage + smoke + nsibs, data = pneumon)
+```
+
+&nbsp;
+
+We create a data frame with given covariates.
+```{r surv_71, echo = TRUE}
+newDF = data.frame(Z=0, mthage=27, urban=1, alcohol=3, smoke=0, region=2, poverty=1, bweight=0, race=1,education=12,nsibs=1,wmonth=0,sfmonth=0)
+newDF$urban = as.factor(newDF$urban)
+newDF$alcohol = as.factor(newDF$alcohol)
+newDF$smoke = as.factor(newDF$smoke)
+newDF$region = as.factor(newDF$region)
+newDF$poverty = as.factor(newDF$poverty)
+newDF$bweight = as.factor(newDF$bweight)
+newDF$race = as.factor(newDF$race)
+```
+
+\newpage
+We display the prediction
+```{r surv_72, echo = TRUE}
+prediction_model = survfit(fit_final)
+marqueurs = predict(fit_final,newDF)
+time = prediction_model$time
+reference = prediction_model$surv
+prediction =  exp(-prediction_model$cumhaz*exp(marqueurs))
+pred = tibble(time,reference, prediction) %>% gather("ind","value",2:3)
+ggplot(pred,aes(x=time,y=value,color=ind)) + geom_step()
+knitr::kable(data.frame(Time=time,Prediction=prediction))
+```
+
+&nbsp;
+
+With our final model, for the newborn we specified, **the probability of not having developed pneumonia at 6 months is 0.9902698**.
