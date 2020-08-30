@@ -1,0 +1,527 @@
+---
+title: "Compte-rendu TP séries temporelles"
+author: "Paul Hardouin"
+date: "January 12, 2020"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_depth: 5
+  pdf_document:
+    toc: yes
+    toc_depth: 5
+subtitle: Devoir maison obligatoire (Dauphine)
+---
+
+<!-- * Vous rendrez un compte rendu écrit sous format HTML en faisant votre TP directement dans ce fichier R Markdown. -->
+<!-- * Utiliser le bouton **Knit HTML** dans RStudio pour compiler le fichier. -->
+<!-- * Vous écrirez vos programmes R complets dans des blocs de code et vos commentaires et explications dans des paragraphes de texte.  -->
+<!-- * Vous pouvez utiliser la syntaxe LaTeX pour écrire des formules mathématiques dans les parties de texte. -->
+<!-- * N'hésitez pas à consulter la documentation relative à RMarkdown -> bouton **?** ou sur http://rmarkdown.rstudio.com/ -->
+<!-- * Pensez à écrire vos noms et prénoms en haut du document. -->
+<!-- * Vous enverrez votre fichier au plus tard le **//2015** au soir à mon adresse jonathan.el-methni@parisdescartes.fr   -->
+
+\newpage
+
+### **1. Etude du jeu de données USAccDeaths**
+
+Nous nous intéressons dans ce jeu de données à l'étude du nombre de morts accidentelles au USA, entre 1973 et 1979. On commence par charger les données et par isoler la dernière année pour pouvoir la comparer à nos prévisions.
+
+```{r 1_library, include=FALSE}
+library(forecast)
+library(caschrono)
+```
+
+```{r 1_load, include=FALSE}
+data("USAccDeaths")
+X <- window(USAccDeaths, start=c(1973, 1), end=c(1977,12))
+Y <- window(USAccDeaths, start=c(1977,12), end=c(1978,12))
+AnneeMin=c(1973.5:1977.5)
+AnneeMax=c(1973.5:1977.5)
+```
+
+#### **1.1. Analyse descriptive**
+
+En premier lieu, nous faisons une analyse descriptive pour comprendre la structure de cette série temporelle.
+
+```{r 11_monthplot, fig.height=4, echo=FALSE}
+# CALCULS TENDANCE
+  trend=ma(X,order=12)
+# CALCULS BANDE
+  MatX=matrix(data=X,nrow=12)
+  Min=apply(MatX,2,min)
+  Max=apply(MatX,2,max)
+# DISPLAY 1
+  par(mfrow=c(1,2))
+  plot(X,ylim=c(6500,13000))
+  points(trend,col="blue",type="l")
+  points(AnneeMin,Min,col="darkgreen",type = "l")
+  points(AnneeMax,Max,col="darkgreen",type = "l")
+  legend("topleft",c("Vraies valeurs","Trend","Min-Max"),col=c("black","blue","darkgreen"),lty=rep(1,3),cex=0.7)
+  title("chronogramme")
+# DISPLAY 2
+  monthplot(X,ylim=c(6500,13000))
+  title("monthplot")
+```
+
+Sur le chronogramme, on observe un motif périodique, ce qui permet de supposer un effet saisonnier. On peut estimer la tendance par la méthode des moyennes mobiles. On prend un ordre égal à 12, car le motif saisonnier semble durer 12 mois.
+
+Sur le monthplot, les chronogrammes mensuels ne sont pas identiques d'un mois à l'autre. Cela confirme un **effet saisonnier** : en particulier, la saison estivale semble plus propice aux accidents. Sans doute est-ce du au fait que les gens sortent plus de chez eux pendant les beaux jours.
+
+En faisant l'hypothèse d'un modèle complètement additif ou multiplicatif, on peut essayer d'arbitrer en utilisant la méthode de la bande. Sur le chronogramme, les 2 courbes semblent parallèles, ce qui nous permet d'aller vers un **modèle additif**.
+
+Nous avons également observé le **lag-plot** (non affiché ici); mais il ne fait pas ressortir clairement l'effet saisonnier, sans doute à cause du faible nombre de données (60) de cette série.
+
+\newpage
+
+On réalise alors une décomposition à l'aide de la fonction **decompose** en mode **additif**, ainsi qu'avec la fonction **stl**. Dans les 2 cas, on retrouve la tendance calculée précédemment par moyenne mobile, ainsi qu'un motif saisonnier évident.
+
+```{r 11_decompose, fig.height=4, echo=FALSE}
+# CALCULS
+  fit1 <- decompose(X)
+  fit2 <- decompose(X,type='multiplicative')
+  fit3 <- stl(X,s.window=12)
+# DISPLAY 1
+  plot(fit1)
+# DISPLAY 3 
+  plot(fit3)
+  title("Decomposition with STL")
+```
+
+\newpage
+
+#### **1.2. Lissage exponentiel**
+
+On veut maintenant faire de la prédiction par lissage exponentiel.
+Pour cela, on utilise la fonction **ets**, en contraignant le modèle avec un code à 3 lettres:
+
+```
+lettre 1 : e : erreur    AMZ [     additive,multiplicative,auto]
+lettre 2 : t : tendance NAMZ [none,additive,multiplicative,auto]
+lettre 3 : s : saison   NAMZ [none,additive,multiplicative,auto]
+```
+
+En premier lieu, on suit nos conclusions précédentes, et on contruit un modèle additif **AAA**.
+Ensuite, on observe les résultats obtenus en utilisant la méthode automatique **ZZZ**.
+
+Consigne    | Modèle retenu | AIC      | AICc     | BIC      |
+----------- | ------------- | -------- | -------- |--------- |
+additif     | ETS(A,Ad,A)   | 950.6122 | 967.2951 | 988.3104 |
+automatique | ETS(M,N,M)    | 949.9315 | 960.8406 | 981.3467 |
+
+Ces résultats privilégient un modèle mutiplicatif sans tendance, ce qui semble aller à l'encontre de nos premières conclusions. En revanche, si on compare ces 2 modèles, on remarque que les critères (AIC, AICc, BIC) ont des valeurs très proches. Il en est de même pour les intervalles de confiance des valeurs prédites (non affiché ici, mais visibles dans les plots ci-dessous).
+
+Cette diversité de modèles acceptables est sans doute due au fait que la tendance a une pente faible. L'affichage des prévisions ci-dessous montre des courbes très proches, et des ordres de grandeur très proches concernant les intervalles de confiance.
+
+```{r 12_ets, echo=FALSE}
+# Calculs
+  #fitAAA <- ets(X,model="AAA",damped=FALSE)
+  fitAAA <- ets(X,model="AAA")
+  fitZZZ <- ets(X)
+# Summaries
+  #summary(fitAAA)
+  #summary(fitZZZ)
+# Forecast
+  predAAA <- forecast(fitAAA,h=12)
+  predZZZ <- forecast(fitZZZ,h=12)
+# Plots
+  par(mfrow=c(1,2))
+  plot(predAAA,xlim=c(1977,1979),ylim=c(6500,13000),cex.main=0.8); points(Y, type='l', col='darkgreen', lwd=2);
+  legend("topleft",c("Vraies valeurs <= 1978","Vraies valeurs en 1979","Forecast"),col=c("black","darkgreen","blue"),lty=rep(1,3),cex=0.7)
+  plot(predZZZ,xlim=c(1977,1979),ylim=c(6500,13000),cex.main=0.8); points(Y, type='l', col='darkgreen', lwd=2)
+  legend("topleft",c("Vraies valeurs <= 1978","Vraies valeurs en 1979","Forecast"),col=c("black","darkgreen","blue"),lty=rep(1,3),cex=0.7)
+```
+
+\newpage
+
+#### **1.3. Modélisation**
+
+##### Analyse des résidus
+
+En premier lieu, on différencie la série pour enlever une tendance et une saisonnalité. On veut ainsi se ramener à une série stationnaire.
+
+```{r 13_diff}
+XX = diff(diff(X,lag=12,dfference=1),lag=1,dfference=1)
+```
+
+On essaye alors d'identifier des ordres de modélisation avec les ACF et PACF, avec les règles suivantes.
+
+```
+AR(p) :  ACF en exponentielle décroissante + PACF nulle en p+1
+MA(q) : PACF en exponentielle décroissante +  ACF nulle en q+1
+ARMA  : compliqué ...
+```
+On voit une exponentielle décroissante sur la PACF, et l'ACF est nulle à partie de q+1 = 2.
+On se dirige alors vers un modèle **MA(1)**.
+
+```{r 13_ACF_PACF, fig.height=4, echo=FALSE}
+par(mfrow=c(1,2))
+acf(XX, main="ACF XX" ,cex.main=0.8)
+pacf(XX,main="PACF XX",cex.main=0.8);
+```
+
+
+##### Modèle MA(1) : VALIDE
+
+On crée le modèle **model_1 = Arima(XX,order=c(0,0,1))** et on analyse ses métriques.
+Le résidu est bien un bruit blanc, et il n'y a pas de colinéarités.
+```
+Critères    [Arima]     AIC=695.22   AICc=695.78   BIC=700.7
+Box-Pierce  [Box.test]  OK  (p-value = 0.9403 > .05)
+Colinéarité [cor.arma]  OK  (pas de coefficient supérieur à 0.9)
+```
+```{r 13_m1, include=FALSE}
+model_1 = Arima(XX,order=c(0,0,1))
+#Box.test(model_1$residuals,lag=20,type="Box-Pierce")
+#cor.arma(model_1)
+#t_stat(model_1)
+```
+
+\newpage
+
+##### Modèle automatique : ARIMA(0,0,1)(0,0,1)[12] : VALIDE
+
+On crée le modèle automatique **model_2 = auto.arima(XX)** et on analyse ses métriques.
+Le résidu est bien un bruit blanc, et il n'y a pas de colinéarités.
+```
+Critères    [Arima]     AIC=689.54   AICc=690.1   BIC=695.09
+Box-Pierce  [Box.test]  OK  (p-value = 0.9571 > .05)
+Colinéarité [cor.arma]  OK  (pas de coefficient supérieur à 0.9)
+```
+```{r 13_m2, include=FALSE}
+model_2 = auto.arima(XX)
+#Box.test(model_2$residuals,lag=20,type="Box-Pierce")
+#cor.arma(model_2)
+#t_stat(model_2)
+```
+
+Ce modèle est assez proche de celui intuité visuellement. La composante saisonnière du résidu est seulement modelisée un peu plus finement.
+
+##### Prévisions des résidus
+
+On observe une prévision un peu plus fine du résidu pour le modèle automatique. Il est probable que l'impact soit négligeable quand on rajoute la tendance et la saisonnalité de la série.
+
+```{r 13_prevResidus, fig.height=2.8, echo=FALSE}
+pred1 = forecast(model_1,12)
+pred2 = forecast(model_2,12)
+par(mfrow=c(1,2))
+plot(pred1,main="ARIMA(0,0,1)"           ,cex.main=0.8)
+plot(pred2,main="ARIMA(0,0,1)(0,0,1)[12]",cex.main=0.8)
+```
+
+##### Prévisions des séries
+
+Comme prévu les 2 prévisions sont très proches.
+
+```{r 13_prevSerie, fig.height=2.8, echo=FALSE}
+model_3 = auto.arima(X,max.P=0,max.Q=0)
+model_4 = auto.arima(X)
+pred3 = forecast(model_3,12)
+pred4 = forecast(model_4,12)
+par(mfrow=c(1,2))
+plot(pred3,main="ARIMA(0,1,1)(0,1,0)[12]",cex.main=0.8)
+plot(pred4,main="ARIMA(0,1,1)(0,1,1)[12]",cex.main=0.8)
+```
+
+\newpage
+
+##### Comparaison globale
+
+On veut comparer les vraies valeurs, le lissage exponentielle, et la prévision par modélisation des résidus. Les 2 prévisions sont assez proches des vraies valeurs, et leur intervalles de confiance sont presque confondus.
+
+```{r 13_comparaison, echo=FALSE}
+plot(USAccDeaths,xlim=c(1977,1979),ylim=c(6500,13000),col="darkgreen",lwd=2,ylab="Nombre de décès",xlab="Temps")
+points(pred4$mean,col='red',lwd=2,type='l')
+points(pred4$lower[,2],col='red',type='l',lty=2)
+points(pred4$upper[,2],col='red',type='l',lty=2)
+points(predZZZ$mean,col='blue',lwd=2,type='l')
+points(predZZZ$lower[,2],col='blue',type='l',lty=3)
+points(predZZZ$upper[,2],col='blue',type='l',lty=3)
+legend("topleft",c("Vraies valeurs","SARIMA","Liss. exp."), col=c("darkgreen","red","blue"), lty=c(rep(1,3),2),lwd=c(rep(2,3),1),cex=0.7)
+```
+
+\newpage
+
+
+### **2. Etude du jeu de données SNCF**
+
+Nous nous intéressons dans ce jeu de données à l'étude du nombre de voyageurs sur le réseau SNCF. Les données sont issues du site **https://freakonometrics.hypotheses.org**. On commence par le charger.
+
+```{r 2_load, include=FALSE}
+sncf=read.table("http://freakonometrics.free.fr/sncf.csv",header=TRUE,sep=";")
+train=as.vector(t(as.matrix(sncf[,2:13])))
+L = length(train)
+X <- ts(train[1:(L-12)], start=c(1963, 1), frequency=12)
+Y <- ts(train[(L-12):L], start=c(1979,12), frequency=12)
+train = ts(train, start=c(1963, 1), frequency=12)
+AnneeMin=c(1964:1980)
+AnneeMax=c(1963:1979)
+```
+
+#### **2.1. Analyse descriptive**
+
+En premier lieu, nous faisons une analyse descriptive pour comprendre la structure de cette série temporelle.
+
+```{r 21_monthplot, fig.height=4, echo=FALSE}
+# CALCULS TENDANCE
+  trend=ma(X,order=12)
+# CALCULS BANDE
+  MatX=matrix(data=X,nrow=12)
+  Min=apply(MatX,2,min)
+  Max=apply(MatX,2,max)
+# DISPLAY 1
+  par(mfrow=c(1,2))
+  plot(X,ylim=c(1000,4500))
+  points(trend,col="blue",type="l")
+  points(AnneeMin,Min,col="darkgreen",type = "l")
+  points(AnneeMax,Max,col="darkgreen",type = "l")
+  legend("topleft",c("Vraies valeurs","Trend","Min-Max"),col=c("black","blue","darkgreen"),lty=rep(1,3),cex=0.7)
+  title("chronogramme")
+# DISPLAY 2
+  monthplot(X,ylim=c(1000,4500))
+  title("monthplot")
+```
+
+Sur le chronogramme, on observe un motif périodique, ce qui permet de supposer un effet saisonnier. On peut estimer la tendance par la méthode des moyennes mobiles. On prend un ordre égal à 12, car le motif saisonnier semble durer 12 mois.
+
+Sur le monthplot, les chronogrammes mensuels ne sont pas identiques d'un mois à l'autre. Cela confirme un **effet saisonnier** : en particulier, la saison estivale et les fêtes de Noël semble plus propices aux déplacements, comme on peut facilement le deviner.
+
+En faisant l'hypothèse d'un modèle complètement additif ou multiplicatif, on peut essayer d'arbitrer en utilisant la méthode de la bande. Sur le chronogramme, les 2 courbes semblent parallèles sur les 15 dernières années, ce qui nous permet d'aller vers un **modèle additif**.
+
+Nous avons également observé le **lag-plot** (non affiché ici). Il confirme l'effet saisonnier d'ordre 12.
+
+```{r 21_lagplot, eval=FALSE, include=FALSE}
+lag.plot(X,lags=12,layout=c(3,4),do.lines=FALSE)
+```
+
+\newpage
+
+On réalise alors une décomposition à l'aide de la fonction **decompose** en mode **additif**, ainsi qu'avec la fonction **stl**. Dans les 2 cas, on retrouve la tendance calculée précédemment par moyenne mobile, ainsi qu'un motif saisonnier évident.
+
+```{r 21_decompose, fig.height=3.5, echo=FALSE}
+# CALCULS
+  fit1 <- decompose(X)
+  fit2 <- decompose(X,type='multiplicative')
+  fit3 <- stl(X,s.window=12)
+# DISPLAY 1
+  plot(fit1)
+# DISPLAY 3 
+  plot(fit3)
+  title("Decomposition with STL")
+```
+
+REMARQUE : sur la composante saisonnière STL, l'amplitude du signal semble varier. Cette composante est peut-être plus compliquée à appréhender qu'il n'y parait.
+
+\newpage
+
+#### **2.2. Lissage exponentiel**
+
+On veut maintenant faire de la prédiction par lissage exponentiel.
+Pour cela, on utilise la fonction **ets**, en contraignant le modèle avec un code à 3 lettres:
+
+```
+lettre 1 : e : erreur    AMZ [     additive,multiplicative,auto]
+lettre 2 : t : tendance NAMZ [none,additive,multiplicative,auto]
+lettre 3 : s : saison   NAMZ [none,additive,multiplicative,auto]
+```
+
+En premier lieu, on suit nos conclusions précédentes, et on contruit un modèle additif **AAA**.
+Ensuite, on observe les résultats obtenus en utilisant la méthode automatique **ZZZ**.
+
+Consigne    | Modèle retenu | AIC      | AICc     | BIC      |
+----------- | ------------- | -------- | -------- |--------- |
+additif     | ETS(A,A,A)    | 3093.313 | 3096.603 | 3149.721 |
+automatique | ETS(M,A,M)    | 3059.861 | 3063.152 | 3116.269 |
+
+Ces résultats privilégient un modèle à tendance additive, mais à saisonnalité mutiplicative sans tendance: Cela confirme la remarque faite en 2.1 à propos de la variabilité de l'amplitude de la saisonnalité calculée dans un cadre additif.
+
+L'affichage des prévisions ci-dessous montre des courbes très proches, et des ordres de grandeur très proches concernant les intervalles de confiance.
+
+**Concernant les intervalles de confiance des valeurs prédites (non affiché ici, mais visibles dans les plots ci-dessus), malgré le modèle retenu ETS(M,A,M) avec les critères AIC-AICc-BIC, il semble pourtant que c'est le modèle ETS(A,A,A) qui a les meilleurs intervalles de confiance (cf. troisième figure ci-dessous)**
+
+```{r 22_ets, fig.height=3.5, echo=FALSE}
+# Calculs
+  #fitAAA <- ets(X,model="AAA",damped=FALSE)
+  fitAAA <- ets(X,model="AAA")
+  fitZZZ <- ets(X)
+# Summaries
+  #summary(fitAAA)
+  #summary(fitZZZ)
+# Forecast
+  predAAA <- forecast(fitAAA,h=12)
+  predZZZ <- forecast(fitZZZ,h=12)
+# Plot 1
+  par(mfrow=c(1,3))
+  plot(predAAA,xlim=c(1979,1981), ylim=c(2500,5000)); points(Y, type='l', col='darkgreen', lwd=2);
+  legend("topleft",c("Vraies valeurs <= 1980","Vraies valeurs en 1981","Forecast"),col=c("black","darkgreen","blue"),lty=rep(1,3),cex=0.7)
+# Plot 2
+  plot(predZZZ,xlim=c(1979,1981), ylim=c(2500,5000)); points(Y, type='l', col='darkgreen', lwd=2)
+  legend("topleft",c("Vraies valeurs <= 1980","Vraies valeurs en 1981","Forecast"),col=c("black","darkgreen","blue"),lty=rep(1,3),cex=0.7)
+# Plot 3
+  plot(Y,ylim=c(2500,5000),col="darkgreen",lwd=2,ylab="Nombre de voyageurs",xlab="Temps",main="ETS(A,A,A) vs ETS(M,A,M)" ,cex.main=0.8)
+  points(predAAA$mean,col='red',lwd=2,type='l')
+  points(predAAA$lower[,2],col='red',type='l',lty=2)
+  points(predAAA$upper[,2],col='red',type='l',lty=2)
+  points(predZZZ$mean,col='blue',lwd=2,type='l')
+  points(predZZZ$lower[,2],col='blue',type='l',lty=3)
+  points(predZZZ$upper[,2],col='blue',type='l',lty=3)
+  legend("topleft",c("Vraies valeurs","Lissage exp. AAA","Lissage exp. MAM"), col=c("darkgreen","red","blue"), lty=c(rep(1,3),2),lwd=c(rep(2,3),1),cex=0.7)
+```
+
+\newpage
+
+#### **2.3. Modélisation**
+
+##### Analyse des résidus
+
+En premier lieu, on différencie la série pour enlever une tendance et une saisonnalité. On veut ainsi se ramener à une série stationnaire.
+
+```{r 23_diff}
+XX = diff(diff(X,lag=12,dfference=1),lag=1,dfference=1)
+```
+
+On essaye alors d'identifier des ordres de modélisation avec les ACF et PACF, avec les règles suivantes.
+
+```
+AR(p) :  ACF en exponentielle décroissante + PACF nulle en p+1
+MA(q) : PACF en exponentielle décroissante +  ACF nulle en q+1
+ARMA  : compliqué ...
+```
+On voit une exponentielle décroissante sur la PACF, et l'ACF est nulle à partie de q+1 = 2.
+On se dirige alors vers un modèle **MA(1)**.
+
+Cependant, l'exponentielle décroissante de la PACF n'est pas non plus avérée, car on retrouve des pics aux positions 11 et 12 sur la PACF. On peut aussi essayer de voir une exponentielle décroissante de l'ACF, et une PACF nulle à partie de p+1 = 13.
+On se dirige alors vers un modèle **RA(12)**.
+ 
+```{r 23_ACF_PACF, fig.height=4, echo=FALSE}
+par(mfrow=c(1,2))
+acf(XX, main="ACF XX" ,cex.main=0.8)
+pacf(XX,main="PACF XX",cex.main=0.8);
+```
+
+\newpage
+
+##### Modèle MA(1) : NON VALIDE
+
+On crée le modèle **model_1 = Arima(XX,order=c(0,0,1))** et on analyse ses métriques.
+Le résidu n'est un bruit blanc.
+```
+Critères    [Arima]     AIC=2427.02   AICc=2427.15   BIC=2436.78
+Box-Pierce  [Box.test]  NOK  (p-value = 0.01957 < .05)
+Colinéarité [cor.arma]  OK  (pas de coefficient supérieur à 0.9)
+```
+```{r 23_m1, include=FALSE}
+model_1 = Arima(XX,order=c(0,0,1))
+#Box.test(model_1$residuals,lag=20,type="Box-Pierce")
+#cor.arma(model_1)
+#t_stat(model_1)
+```
+
+&nbsp;
+
+##### Modèle RA(12) : VALIDE
+
+On crée le modèle **model_2 = Arima(XX,order=c(12,0,0))** et on analyse ses métriques.
+Le résidu est bien un bruit blanc, et il n'y a pas de colinéarités.
+```
+Critères    [Arima]     AIC=2409.49   AICc=2411.88   BIC=2455.02
+Box-Pierce  [Box.test]  OK  (p-value = 0.7465 > .05)
+Colinéarité [cor.arma]  OK  (pas de coefficient supérieur à 0.9)
+```
+```{r 23_m2, include=FALSE}
+model_2 = Arima(XX,order=c(12,0,0))
+#Box.test(model_2$residuals,lag=45,type="Box-Pierce")
+#cor.arma(model_2)
+#t_stat(model_2)
+```
+
+&nbsp;
+
+##### Modèle automatique : ARIMA(1,0,1)(0,0,1)[12] with zero mean : VALIDE
+
+On crée le modèle automatique **model_3 = auto.arima(XX)** et on analyse ses métriques.
+Le résidu est bien un bruit blanc, et il n'y a pas de colinéarités.
+```
+Critères    [Arima]     AIC=2386   AICc=2386.21   BIC=2399.01
+Box-Pierce  [Box.test]  OK  (p-value = 0.9475 > .05)
+Colinéarité [cor.arma]  OK  (pas de coefficient supérieur à 0.9)
+```
+```{r 23_m3, include=FALSE}
+model_3 = auto.arima(XX)
+#Box.test(model_3$residuals,lag=45,type="Box-Pierce")
+#cor.arma(model_3)
+#t_stat(model_3)
+```
+
+&nbsp;
+
+Notre deuxième modèle **RA(12)** fonctionne correctement pour modéliser notre résidu.
+Le modèle automatique **ARIMA(1,0,1)(0,0,1)[12]** a de meilleures performances, mais il est plus compliqué à intuiter.
+
+\newpage
+
+##### Prévisions des résidus
+
+Les prévisions sont très proches. Idem pour les intervalles de confiance.
+Ce sera encore plus flagrant quand on aura rajouté la tendance et la saisonnalité de la série.
+
+```{r 23_prevResidus, fig.height=2.8, echo=FALSE}
+pred2 = forecast(model_2,12)
+pred3 = forecast(model_3,12)
+par(mfrow=c(1,2))
+plot(pred2, xlim=c(1979,1981), main="ARIMA(12,0,0)"          ,cex.main=0.8)
+plot(pred3, xlim=c(1979,1981), main="ARIMA(1,0,1)(0,0,1)[12]",cex.main=0.8)
+```
+
+##### Prévisions des séries
+
+Comme prévu les 2 prévisions sont très proches.
+
+```{r 23_prevSerie, fig.height=2.8, echo=FALSE}
+model_4 = auto.arima(X,start.p=12,max.p=12,max.q=0,max.P=0,max.Q=0)
+model_5 = auto.arima(X)
+pred4 = forecast(model_4,12)
+pred5 = forecast(model_5,12)
+par(mfrow=c(1,2))
+plot(pred4, xlim=c(1979,1981), main="ARIMA(12,1,0)(0,1,0)[12]",cex.main=0.8)
+plot(pred5, xlim=c(1979,1981), main="ARIMA(1,1,1)(0,1,1)[12]",cex.main=0.8)
+```
+
+\newpage
+
+##### Comparaison globale
+
+On veut comparer les vraies valeurs, le lissage exponentielle, et la prévision par modélisation des résidus.
+Les 2 prévisions sont assez proches l'une de l'autre, et leurs intervalles de confiance contiennent les vraies valeurs.
+Cependant, la prévision SARIMA a un meilleur intervalle de confiance.
+
+```{r 23_comparaison, echo=FALSE}
+plot(train,xlim=c(1979,1981), ylim=c(2000,5000), col="darkgreen",lwd=2,ylab="Nombre de décès",xlab="Temps")
+points(pred5$mean,col='red',lwd=2,type='l')
+points(pred5$lower[,2],col='red',type='l',lty=2)
+points(pred5$upper[,2],col='red',type='l',lty=2)
+points(predZZZ$mean,col='blue',lwd=2,type='l')
+points(predZZZ$lower[,2],col='blue',type='l',lty=3)
+points(predZZZ$upper[,2],col='blue',type='l',lty=3)
+legend("topleft",c("Vraies valeurs","SARIMA","Liss. exp."), col=c("darkgreen","red","blue"), lty=c(rep(1,3),2),lwd=c(rep(2,3),1),cex=0.7)
+```
+
+<!-- ```{r eval=FALSE, include=FALSE} -->
+<!-- #immat <- read_excel("c7ex2.xls") -->
+<!-- #immat <- immat[!is.na(immat[,2]),2] -->
+<!-- #immat <- as.integer(immat$IMMAT) -->
+<!-- #L = length(immat) -->
+<!-- #X <- ts(immat[1:(L-12)], start=c( 1,1), frequency=12) -->
+<!-- #Y <- ts(immat[(L-11):L], start=c(10,1), frequency=12) -->
+<!-- #AnneeMin=c(1:9) -->
+<!-- #AnneeMax=c(1:9) -->
+<!-- ``` -->
+<!-- ```{r eval=FALSE, include=FALSE} -->
+<!-- #data <- read.csv("multiTimeline.csv") -->
+<!-- #data <- as.integer(as.character(data$Catégorie...Toutes.catégories[2:181])) -->
+<!-- #L = length(data) -->
+<!-- #X <- ts(data[1:(L-12)], start=c(2004,1), frequency=12) -->
+<!-- #Y <- ts(data[(L-11):L], start=c(2018,1), frequency=12) -->
+<!-- #AnneeMin=c(2005:2018) -->
+<!-- #AnneeMax=c(2004:2017) -->
+<!-- ``` -->
